@@ -36,7 +36,17 @@ spectral angle, absorption bands and **CIELAB color (ΔE)**.
   <img src="docs/screenshot-library.png" alt="Library search" width="420">
   &nbsp;
   <img src="docs/screenshot-calibration.png" alt="Calibration" width="420">
+  &nbsp;
+  <img src="docs/screenshot-spanish.png" alt="Spanish UI" width="420">
 </p>
+
+## Requirements
+
+- **Linux with V4L2** for live camera capture (the analysis/calibration/CLI
+  also run on macOS/Windows — only live capture is Linux-only)
+- Python **3.10+** · Node.js **18+** (frontend build)
+- Any **UVC USB camera** + diffraction tube or grating spectrometer
+- Optional: mercury lamp for ±1–2 nm calibration anchors
 
 ## Quick start
 
@@ -132,17 +142,31 @@ python -m espectro info
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| GET | `/api/status` | calibration, cameras, library stats |
+| GET | `/api/status?refresh_cameras=true` | calibration, cameras (force re-probe), library stats |
 | GET | `/api/stream` | live MJPEG view |
 | POST | `/api/capture/{slot}` | capture `sample`/`lamp`/`dark`/`cal` |
+| GET/DELETE | `/api/frame/{slot}` | captured photo / clear it |
 | POST | `/api/analyze` | full identification → JSON (curves, top-10, colors) |
 | POST | `/api/calibrate` | pixel → nm (led/anchors/range/blackbody) |
+| GET | `/api/calibration/preview` | calibration plot (PNG) |
 | GET | `/api/library/search?q=` | autocomplete |
 | GET | `/api/library/spectrum?name=` | material detail + chart data |
 | POST | `/api/library/fetch/{usgs\|pigments\|revigo}` | download collections |
 | POST | `/api/library/upload` | add your own CSV |
+| POST | `/api/camera/{settings,refresh,stop}` | camera index / exposure control |
 
 All messages accept `lang=en|es`.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Frame is almost black | Turn on the spectrometer LED (or raise **Exposure**); the app warns you |
+| USB camera missing from the selector | Plug it in → **Refresh status** (probe TTL is 20 s) |
+| Wrong (laptop) camera selected | Pick the `★ USB` entry in the **Camera** dropdown |
+| Results look random | Recalibrate with **LED automatic**, use the LED reference photo, same exposure for sample and LED |
+| "Calibration only covers N points" | The calibration doesn't span your band — capture the LED again |
+| Band not detected | Adjust *Band threshold* / *Smoothing*, or set the rows manually |
 
 ## Project structure
 

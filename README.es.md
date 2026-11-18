@@ -40,7 +40,18 @@ espectros de referencia** con ángulo espectral, bandas de absorción y
   <img src="docs/screenshot-library.png" alt="Buscador" width="420">
   &nbsp;
   <img src="docs/screenshot-calibration.png" alt="Calibración" width="420">
+  &nbsp;
+  <img src="docs/screenshot-spanish.png" alt="Interfaz en español" width="420">
 </p>
+
+## Requisitos
+
+- **Linux con V4L2** para la captura en vivo (el análisis, la calibración y
+  la CLI también funcionan en macOS/Windows — solo la captura en vivo es
+  exclusiva de Linux)
+- Python **3.10+** · Node.js **18+** (compilación del frontend)
+- Cualquier **cámara USB UVC** + tubo de espectrómetro o red de difracción
+- Opcional: lámpara de mercurio para anclas de calibración de ±1-2 nm
 
 ## Arranque rápido
 
@@ -135,17 +146,31 @@ python -m espectro info
 
 | Método | Endpoint | Función |
 |---|---|---|
-| GET | `/api/status` | calibración, cámaras, biblioteca |
+| GET | `/api/status?refresh_cameras=true` | calibración, cámaras (fuerza re-sondeo), biblioteca |
 | GET | `/api/stream` | vista en vivo MJPEG |
 | POST | `/api/capture/{slot}` | capturar `sample`/`lamp`/`dark`/`cal` |
+| GET/DELETE | `/api/frame/{slot}` | foto capturada / borrarla |
 | POST | `/api/analyze` | identificación completa → JSON |
 | POST | `/api/calibrate` | píxel → nm (led/anclas/rango/cuerpo negro) |
+| GET | `/api/calibration/preview` | gráfica de calibración (PNG) |
 | GET | `/api/library/search?q=` | autocompletado |
 | GET | `/api/library/spectrum?name=` | ficha + datos de la gráfica |
 | POST | `/api/library/fetch/{usgs\|pigments\|revigo}` | descargar colecciones |
 | POST | `/api/library/upload` | subir CSV propio |
+| POST | `/api/camera/{settings,refresh,stop}` | índice de cámara / exposición |
 
 Todos los mensajes aceptan `lang=en|es`.
+
+## Solución de problemas
+
+| Síntoma | Solución |
+|---|---|
+| La imagen sale casi negra | Enciende el LED del espectrómetro (o sube **Exposición**); la app te avisa |
+| Falta la cámara USB en el selector | Conéctala → **Refresh status** (el sondeo caduca a los 20 s) |
+| Se eligió la cámara del portátil | Elige la entrada `★ USB` en el desplegable **Camera** |
+| Los resultados parecen aleatorios | Recalibra con **LED automático**, usa la foto del LED como referencia y misma exposición en muestra y LED |
+| «Calibration only covers N points» | La calibración no cubre tu banda — captura el LED de nuevo |
+| No se detecta la banda | Ajusta *Band threshold* / *Smoothing* o fija las filas a mano |
 
 ## Estructura
 
