@@ -32,6 +32,17 @@ export default function CameraPanel({ slots, status, refresh, hint }) {
     } catch (e) { setError(e.message) } finally { setBusy(null) }
   }
 
+  const upload = async (id, e) => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    setBusy(id); setError(null)
+    try {
+      await api.uploadFrame(id, f)
+      refresh()
+    } catch (err) { setError(err.message) } finally { setBusy(null) }
+  }
+
   const toggleLive = async (v) => {
     setError(null)
     if (v) {
@@ -131,12 +142,22 @@ export default function CameraPanel({ slots, status, refresh, hint }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
           {slots.map((s) => (
-            <button key={s.id} className={`btn ${s.primary ? 'primary' : ''} block`}
-              disabled={busy != null || !cameras.length}
-              onClick={() => capture(s.id)}>
-              {busy === s.id ? <span className="spin" /> : null}
-              {s.label}
-            </button>
+            <div key={s.id} style={{ display: 'flex', gap: 8 }}>
+              <button className={`btn ${s.primary ? 'primary' : ''}`}
+                style={{ flex: 1, minWidth: 0 }}
+                disabled={busy != null || !cameras.length}
+                onClick={() => capture(s.id)}>
+                {busy === s.id ? <span className="spin" /> : null}
+                {s.label}
+              </button>
+              <label className="btn" title={t('cam.upload')}
+                style={{ padding: '11px 13px', cursor: 'pointer' }}>
+                📁
+                <input type="file" hidden accept="image/*"
+                  disabled={busy != null}
+                  onChange={(e) => upload(s.id, e)} />
+              </label>
+            </div>
           ))}
         </div>
         {hint && <div style={{ fontSize: 12.6, color: '#7c8aa8' }}>{hint}</div>}

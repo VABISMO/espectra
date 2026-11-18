@@ -42,6 +42,7 @@ export const STRINGS = {
     'cam.delete': 'delete',
     'cam.off': 'Live view off — turn on <b>Live</b> to see the spectrometer band in real time',
     'cam.needSample': 'Capture the sample first',
+    'cam.upload': 'Upload an existing photo instead',
 
     // --- analyze
     'an.step1': 'Step 1 · Capture',
@@ -274,6 +275,7 @@ export const STRINGS = {
     'cam.delete': 'borrar',
     'cam.off': 'Transmisión apagada — activa <b>En vivo</b> para ver la banda del espectrómetro en tiempo real',
     'cam.needSample': 'Captura primero la muestra',
+    'cam.upload': 'Subir una foto existente en su lugar',
 
     'an.step1': 'Paso 1 · Captura',
     'an.h2': 'Fotos desde la cámara USB',

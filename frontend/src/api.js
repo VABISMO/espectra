@@ -26,6 +26,11 @@ export const api = {
   streamUrl: () => withLang('/api/stream'),
   frameUrl: (slot) => withLang(`/api/frame/${slot}`) + `&t=${Date.now()}`,
   capture: (slot) => fetch(withLang(`/api/capture/${slot}`), { method: 'POST' }).then(j),
+  uploadFrame: (slot, file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return fetch(withLang(`/api/frame/${slot}`), { method: 'POST', body: fd }).then(j)
+  },
   clearSlot: (slot) => fetch(withLang(`/api/frame/${slot}`), { method: 'DELETE' }).then(j),
   analyze: (payload) => post('/api/analyze', payload),
   calibrate: (payload) => post('/api/calibrate', payload),

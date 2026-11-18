@@ -123,6 +123,14 @@ def test_api() -> None:
         check("JSON sin NaN", all(
             isinstance(v, (int, float)) and math.isfinite(v) for v in nums))
 
+    # --- subida de foto (alternativa cuando no hay cámara)
+    png = (ex / "demo_muestra.png").read_bytes()
+    r = client.post("/api/frame/sample",
+                    files={"file": ("muestra.png", png, "image/png")})
+    check("POST /api/frame (subida)", r.status_code == 200, r.text[:120])
+    check("foto subida en la ranura",
+          client.get("/api/status").json()["slots"]["sample"] is True)
+
     # --- ranuras / borrado
     r = client.delete("/api/frame/sample")
     check("DELETE frame", r.status_code == 200)

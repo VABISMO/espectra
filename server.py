@@ -269,6 +269,25 @@ def frame(slot: str, lang: str = "en") -> Response:
                     headers={"Cache-Control": "no-store"})
 
 
+@app.post("/api/frame/{slot}")
+async def frame_upload(slot: str, file: UploadFile = File(...),
+                       lang: str = "en") -> dict:
+    """Sube una foto existente a una ranura (alternativa a la cámara)."""
+    if slot not in SLOTS:
+        raise HTTPException(404, _m(lang, "ranura desconocida", "unknown slot"))
+    raw = await file.read()
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except Exception as exc:                            # noqa: BLE001
+        raise HTTPException(400, _m(lang, "archivo de imagen no válido",
+                                    "not a valid image file")) from exc
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="PNG")
+    STATE["slots"][slot] = buf.getvalue()
+    return {"ok": True, "slot": slot}
+
+
 @app.delete("/api/frame/{slot}")
 def frame_delete(slot: str) -> dict:
     STATE["slots"].pop(slot, None)
