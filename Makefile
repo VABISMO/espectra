@@ -33,5 +33,5 @@ fmt:                ## formato automático
 	.venv/bin/ruff check --fix --select I,RUF100,F401 espectro scripts server.py tests || true
 
 clean:              ## artefactos generados
-	rm -rf frontend/dist data/examples resultados .ruff_cache \
-	       **/__pycache__ __pycache__
+	rm -rf frontend/dist data/examples resultados .ruff_cache
+	find . -name __pycache__ -type d -not -path "./.venv/*" -exec rm -rf {} +

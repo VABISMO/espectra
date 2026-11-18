@@ -21,7 +21,8 @@ const post = (url, body) =>
   }).then(j)
 
 export const api = {
-  status: () => fetch(withLang('/api/status')).then(j),
+  status: (hard = false) =>
+    fetch(withLang(hard ? '/api/status?refresh_cameras=true' : '/api/status')).then(j),
   streamUrl: () => withLang('/api/stream'),
   frameUrl: (slot) => withLang(`/api/frame/${slot}`) + `&t=${Date.now()}`,
   capture: (slot) => fetch(withLang(`/api/capture/${slot}`), { method: 'POST' }).then(j),

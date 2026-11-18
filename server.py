@@ -137,7 +137,7 @@ def get_libs():
 
 # ---------------------------------------------------------------- endpoints
 @app.get("/api/status")
-def status() -> dict:
+def status(refresh_cameras: bool = False) -> dict:
     cal_info = None
     if CAL_PATH.exists():
         coeffs, meta = load_cal(CAL_PATH)
@@ -147,7 +147,7 @@ def status() -> dict:
                     "led_peaks": meta.get("led_peaks_pixel"),
                     "file": str(CAL_PATH.relative_to(ROOT))}
     try:
-        cameras = cam.probe_cameras()
+        cameras = cam.probe_cameras(refresh=refresh_cameras)
     except RuntimeError:
         cameras = []
     try:

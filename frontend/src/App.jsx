@@ -20,8 +20,8 @@ function Shell() {
   const [status, setStatus] = useState(null)
   const [err, setErr] = useState(null)
 
-  const refresh = useCallback(() => {
-    api.status()
+  const refresh = useCallback((hard = false) => {
+    api.status(Boolean(hard))
       .then((s) => { setStatus(s); setErr(null) })
       .catch((e) => setErr(e.message))
   }, [])
@@ -62,7 +62,8 @@ function Shell() {
           {status && status.cameras.length > 0 && (
             <span className="chip violet">◉ {t('status.cameras', { n: status.cameras.length })}</span>
           )}
-          <button className="btn sm ghost" onClick={refresh}>↻ {t('status.refresh')}</button>
+          <button className="btn sm ghost" onClick={() => refresh(true)}>
+            ↻ {t('status.refresh')}</button>
 
           {/* selector de idioma discreto */}
           <div style={{

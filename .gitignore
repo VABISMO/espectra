@@ -19,3 +19,6 @@ frontend/dist/
 .DS_Store
 .idea/
 .vscode/
+
+# metadatos de paquete (generado por pip install -e .)
+*.egg-info/
