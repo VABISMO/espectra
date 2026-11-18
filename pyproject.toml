@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "espectra"
+version = "1.0.0"
+description = "USB spectrometer web app: capture with a camera, calibrate with a white LED and identify materials against 1000+ reference spectra"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ESPECTRA contributors" }]
+keywords = ["spectroscopy", "spectrometer", "usb-camera", "material-identification", "reflectance"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  "numpy>=1.26",
+  "Pillow>=10.0",
+  "matplotlib>=3.8",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.34",
+  "python-multipart>=0.0.9",
+  "opencv-python-headless>=4.10",
+]
+
+[project.optional-dependencies]
+dev = ["httpx2>=0.1", "ruff>=0.6"]
+
+[project.scripts]
+espectra = "espectro.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/VABISMO/espectra"
+Source = "https://github.com/VABISMO/espectra"
+
+[tool.setuptools]
+packages = ["espectro"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# solo errores reales en CI; estilo se reviso a mano
+select = ["F", "E9"]
