@@ -372,6 +372,32 @@ ol.steps li::before {
 }
 
 /* ============================================================
+   BUSCADOR DESTACADO (search bar con lupa)
+   ============================================================ */
+.searchbar input {
+  width: 100%; padding: 16px 18px 16px 50px; border-radius: 14px;
+  font-size: 17px; font-weight: 500; letter-spacing: .2px;
+  border: 1.5px solid var(--line-strong); background: #0a101f;
+  color: var(--text); transition: border .15s, box-shadow .15s;
+}
+.searchbar input::placeholder { color: #6f7d9b; font-weight: 400; }
+.searchbar input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(76, 201, 240, .14);
+}
+.searchbar .sico {
+  position: absolute; left: 17px; top: 46%; transform: translateY(-50%);
+  font-size: 19px; color: var(--dim); pointer-events: none;
+}
+.tryrow {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin-top: 10px; font-size: 13.5px; color: var(--muted);
+}
+.tryrow .chip { cursor: pointer; transition: all .13s; }
+.tryrow .chip:hover { border-color: var(--accent); color: var(--text);
+  background: rgba(76, 201, 240, .12); }
+
+/* ============================================================
    CENTRADO — el shell entero se centra en pantallas anchas
    y el contenido nunca se pega a la izquierda
    ============================================================ */

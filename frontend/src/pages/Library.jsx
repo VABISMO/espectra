@@ -108,7 +108,8 @@ export default function Library({ status, refresh }) {
       <div className="card">
         <div className="kicker">{t('lib.search')}</div>
         <h2>{t('lib.selectHint')}</h2>
-        <div className="ac" ref={boxRef} style={{ maxWidth: 640, marginTop: 12 }}>
+        <div className="ac searchbar" ref={boxRef} style={{ maxWidth: 720, marginTop: 14 }}>
+          <span className="sico">🔍</span>
           <input
             value={q}
             placeholder={t('lib.searchPh')}
@@ -117,6 +118,7 @@ export default function Library({ status, refresh }) {
             onFocus={() => hits && setOpen(true)}
             autoComplete="off"
             spellCheck={false}
+            aria-label={t('lib.search')}
           />
           {open && hits && hits.results.length > 0 && (
             <div className="ac-list">
@@ -137,12 +139,21 @@ export default function Library({ status, refresh }) {
               </div>
             </div>
           )}
-          {hits && (
-            <div className="ac-count">
-              {t('lib.results', { n: hits.total })}{searching ? ` · ${t('lib.searching')}` : ''}
-            </div>
-          )}
         </div>
+        {hits && (
+          <div className="ac-count">
+            {t('lib.results', { n: hits.total })}{searching ? ` · ${t('lib.searching')}` : ''}
+          </div>
+        )}
+        {!hits && (
+          <div className="tryrow">
+            <span>{t('lib.try')}</span>
+            {['hematite', 'azurite', 'malachite', 'goethite', 'quartz'].map((s) => (
+              <span key={s} className="chip" role="button"
+                onClick={() => { setQ(s); setOpen(true) }}>{s}</span>
+            ))}
+          </div>
+        )}
 
         {detailErr && <div className="alert error" style={{ marginTop: 14 }}>{detailErr}</div>}
         {loading && <div className="alert info" style={{ marginTop: 14 }}>
