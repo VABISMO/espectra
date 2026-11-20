@@ -32,7 +32,8 @@ from espectro import match as mtc
 from espectro import plotting as pl
 from espectro.calib import apply_cal, load_cal, save_cal
 from espectro.color import lab_of_spectrum, lab_to_hex
-from espectro.reflectance import pseudo_reflectance, resample
+from espectro.reflectance import (fill_nan, linearize, pseudo_reflectance,
+                                  resample)
 
 ROOT = Path(__file__).resolve().parent
 CAL_PATH = ROOT / "data" / "calibration" / "cal.json"
@@ -124,14 +125,16 @@ def _img_from_slot(slot: str, lang: str = "en") -> np.ndarray:
 
 
 # --------------------------------------------------------------- biblioteca
-def get_libs():
-    """(spectra, paired) cacheados; se invalida al añadir archivos."""
+def get_libs(fwhm: float | None = lib.FWHM_DEFAULT):
+    """(spectra, paired) cacheados; se invalida al añadir archivos o al
+    cambiar la resolución pedida (`fwhm`)."""
     marker = sum(1 for _ in LIB_DIR.rglob("*.csv")) * 1_000_000 + \
         sum(p.stat().st_mtime for p in LIB_DIR.rglob("*") if p.is_file())
-    if LIB_CACHE["libs"] is None or LIB_CACHE.get("marker") != marker:
+    key = (marker, None if fwhm is None else round(float(fwhm), 3))
+    if LIB_CACHE["libs"] is None or LIB_CACHE.get("marker") != key:
         spectra = lib.load_library(LIB_DIR)
-        LIB_CACHE["libs"] = (spectra, lib.to_grid(spectra, GRID))
-        LIB_CACHE["marker"] = marker
+        LIB_CACHE["libs"] = (spectra, lib.to_grid(spectra, GRID, fwhm=fwhm))
+        LIB_CACHE["marker"] = key
     return LIB_CACHE["libs"]
 
 
@@ -299,6 +302,10 @@ def analyze(payload: dict) -> dict:
     lang = payload.get("lang", "en")
     slot = payload.get("slot", "sample")
     channel = payload.get("channel", "sum")
+    gamma = float(payload.get("gamma", 1.0))
+    # resolución del instrumento a la que se degradan las referencias
+    fwhm_in = payload.get("fwhm", lib.FWHM_DEFAULT)
+    fwhm = None if fwhm_in in (None, 0, "off") else float(fwhm_in)
     img = im.array_gray(_img_from_slot(slot, lang), channel)
     # brillo relativo (para avisar de fotos oscuras en la interfaz)
     maxv = 765.0 if channel == "sum" else 255.0
@@ -319,11 +326,12 @@ def analyze(payload: dict) -> dict:
         ext_l = im.extract_profile(lamp_img, axis=ext.axis, smooth=5,
                                    frac=float(payload.get("frac", 0.25)))
         n = min(ext.intensity.size, ext_l.intensity.size)
-        y = pseudo_reflectance(ext.intensity[:n], ext_l.intensity[:n], smooth=5)
+        y = pseudo_reflectance(ext.intensity[:n], ext_l.intensity[:n],
+                               smooth=5, gamma=gamma, full_scale=maxv)
         px = ext.pixel[:n]
         has_lamp = True
     else:
-        y = np.clip(ext.intensity, 0, None)
+        y = np.clip(linearize(ext.intensity, gamma, maxv), 0, None)
         y = y / y.max() if y.max() > 0 else y
         px = ext.pixel
         has_lamp = False
@@ -335,18 +343,19 @@ def analyze(payload: dict) -> dict:
             "Calibration missing: capture the LED in the Calibration tab"))
     coeffs, _ = load_cal(CAL_PATH)
     nm = apply_cal(coeffs, px)
-    y_grid = resample(nm, y, GRID)
+    y_grid = resample(nm, y, GRID)          # conserva los NaN de la máscara
     ok = np.isfinite(y_grid)
     if ok.sum() < 0.4 * GRID.size:
         raise HTTPException(400, _m(
             lang, f"La calibración solo cubre {int(ok.sum())}/{len(GRID)} "
                   f"puntos de la banda — recalibra",
             f"The calibration only covers {int(ok.sum())}/{len(GRID)} points "
-            f"of the band — recalibrate"))
-    y_grid = np.nan_to_num(y_grid, nan=float(np.nanmean(y_grid[ok])))
+            "of the band — recalibrate"))
+    # versión rellena SOLO para mostrar/serializar; el motor usa `y_grid`
+    y_show = fill_nan(y_grid)
 
     # --- comparación
-    _, paired = get_libs()
+    _, paired = get_libs(fwhm)
     results = mtc.match(GRID, y_grid, paired, GRID,
                         top=int(payload.get("top", 10)))
     s_hex = lab_to_hex(lab_of_spectrum(GRID, y_grid))
@@ -366,10 +375,14 @@ def analyze(payload: dict) -> dict:
         "image_shape": [int(img.shape[0]), int(img.shape[1])],
         "has_lamp": has_lamp,
         "domain": "nm" if has_lamp else "pixel",
+        "gamma": gamma,
+        "fwhm": fwhm,
+        "verdict": results.verdict.as_dict(),
+        "coverage": round(float(ok.mean()), 4),
         "profile": {"pixel": [int(p) for p in ext.pixel],
                     "intensity": r3(ext.intensity)},
-        "curve": {"nm": r1(GRID), "reflectance": r3(y_grid)},
-        "continuum": r3(mtc.continuum_removal(GRID, y_grid)),
+        "curve": {"nm": r1(GRID), "reflectance": r3(y_show)},
+        "continuum": r3(mtc.continuum_removal(GRID, y_show)),
         "sample_color": s_hex,
         "results": [
             {
@@ -406,11 +419,11 @@ def calibrate(payload: dict) -> dict:
         Image.fromarray(img).save(img_path)
         out_path = Path(td) / "cal.json"
         pv = Path(td) / "preview.png"
-        method = payload.get("method", "led")
+        method = payload.get("method", "auto")
         anchors = payload.get("anchors") or []
         ns = _ns(image=str(img_path), dark=None, axis=None, channel="sum",
                  smooth=5, anchor=[(float(a), float(b)) for a, b in anchors],
-                 led=method == "led",
+                 led=method == "led", lines=method == "lines",
                  range=[float(v) for v in payload["range"]]
                  if payload.get("range") else None,
                  blackbody=float(payload["blackbody"])

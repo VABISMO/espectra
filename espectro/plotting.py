@@ -44,9 +44,9 @@ def plot_extraction(img: np.ndarray, rows: tuple[int, int],
 def plot_calibration(pixel: np.ndarray, intensity: np.ndarray,
                      coeffs: np.ndarray, fit_T: float | None,
                      fit_corr: float | None, out: str | Path,
-                     model_fn=None) -> Path:
+                     model_fn=None, model_label: str | None = None) -> Path:
     """Gráfica de la calibración (grande); `model_fn(nm)` dibuja la
-    plantilla de ajuste (LED o Planck·QE)."""
+    plantilla de ajuste (LED, líneas Hg o Planck·QE)."""
     nm = np.polyval(coeffs, pixel)
     fig, ax = plt.subplots(figsize=(14, 6.8))
     order = np.argsort(nm)
@@ -62,10 +62,11 @@ def plot_calibration(pixel: np.ndarray, intensity: np.ndarray,
         model = model_fn(nm)
         m = np.nanmax(intensity)
         if m > 0 and np.nanmax(model) > 0:
+            lbl = model_label or "plantilla LED"
+            if fit_corr and np.isfinite(fit_corr):
+                lbl = f"{lbl} (r={fit_corr:.3f})"
             ax.plot(nm[order], model[order] / np.nanmax(model) * m,
-                    lw=1.2, ls="--", color="darkorange",
-                    label=f"plantilla LED (r={fit_corr:.3f})"
-                    if fit_corr and np.isfinite(fit_corr) else "plantilla LED")
+                    lw=1.2, ls="--", color="darkorange", label=lbl)
     ax.set_xlabel("longitud de onda (nm)")
     ax.set_ylabel("intensidad (u.a.)")
     ax.set_title("Calibración píxel → nm")

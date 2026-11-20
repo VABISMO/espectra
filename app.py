@@ -35,7 +35,8 @@ from espectro import plotting as pl
 from espectro.calib import apply_cal, load_cal
 from espectro.cli import CAL_DIR, LIB_DIR, cmd_calibrate
 from espectro.color import lab_of_spectrum, lab_to_hex
-from espectro.reflectance import pseudo_reflectance, resample
+from espectro.reflectance import (fill_nan, linearize, pseudo_reflectance,
+                                  resample)
 
 ROOT = Path(__file__).resolve().parent
 GRID = np.arange(400.0, 700.0 + 1e-9, 5.0)
@@ -89,9 +90,10 @@ def _run_cli(fn, ns: argparse.Namespace) -> str:
 
 
 @st.cache_resource(show_spinner="Cargando bibliotecas de materiales…")
-def load_libs() -> tuple[list[lib.Spectrum], list[tuple[lib.Spectrum, np.ndarray]]]:
+def load_libs(fwhm: float | None = lib.FWHM_DEFAULT
+              ) -> tuple[list[lib.Spectrum], list[tuple[lib.Spectrum, np.ndarray]]]:
     spectra = lib.load_library(LIB_DIR)
-    return spectra, lib.to_grid(spectra, GRID)
+    return spectra, lib.to_grid(spectra, GRID, fwhm=fwhm)
 
 
 def active_cal() -> tuple[np.ndarray | None, dict]:
@@ -126,12 +128,16 @@ def status_sidebar(cal_info: tuple[np.ndarray | None, dict], n_lib: int) -> str:
         st.divider()
         st.markdown("**Estado**")
         if coeffs is not None:
-            modo = {"led": "🟦 LED automático", "anchors": "📍 Anclas manuales",
+            modo = {"led": "🟦 LED blanco", "lines": "⚡ Líneas de mercurio/CFL",
+                    "anchors": "📍 Anclas manuales",
                     "range": "📏 Rango asumido",
                     "range_fallback": "📏 Rango (fallback)",
                     "blackbody": "🔴 Cuerpo negro"}.get(
                         meta.get("mode", "?"), meta.get("mode", "?"))
             st.success(f"Calibración: {modo}")
+            if meta.get("lines"):
+                st.caption("líneas usadas: " + ", ".join(
+                    f"{d['nm']:g} nm" for d in meta["lines"]))
             if meta.get("led_corr") is not None and np.isfinite(meta.get("led_corr", np.nan)):
                 st.caption(f"ajuste plantilla LED: r = {meta['led_corr']:.3f}")
         else:
@@ -386,7 +392,8 @@ def page_analyze(cal_info) -> None:
 
 
 def _analyze(img, ext, lamp_png, coeffs, channel, smooth, frac, rows, axis,
-             dark):
+             dark, gamma=1.0):
+    maxv = 765.0 if channel == "sum" else 255.0
     if lamp_png:
         lamp_img = _to_gray(lamp_png, channel)
         ext_l = im.extract_profile(lamp_img, rows=None,
@@ -396,28 +403,30 @@ def _analyze(img, ext, lamp_png, coeffs, channel, smooth, frac, rows, axis,
             # recorta al común (fotos de distinto tamaño)
             n = min(ext_l.intensity.size, ext.intensity.size)
             y = pseudo_reflectance(ext.intensity[:n], ext_l.intensity[:n],
-                                   smooth=smooth)
+                                   smooth=smooth, gamma=gamma,
+                                   full_scale=maxv)
             px = ext.pixel[:n]
         else:
             y = pseudo_reflectance(ext.intensity, ext_l.intensity,
-                                   smooth=smooth)
+                                   smooth=smooth, gamma=gamma,
+                                   full_scale=maxv)
             px = ext.pixel
     else:
-        y = np.clip(ext.intensity, 0, None)
+        y = np.clip(linearize(ext.intensity, gamma, maxv), 0, None)
         y = y / y.max() if y.max() > 0 else y
         px = ext.pixel
 
     nm = apply_cal(coeffs, px)
-    y_grid = resample(nm, y, GRID)
+    y_grid = resample(nm, y, GRID)          # conserva los NaN de la máscara
     ok = np.isfinite(y_grid)
     if ok.sum() < 0.4 * GRID.size:
         raise ValueError("la calibración no cubre la banda de la foto "
                          f"(solo {ok.sum()}/{GRID.size} puntos); recalibra")
-    y_grid = np.nan_to_num(y_grid, nan=float(np.nanmean(y_grid[ok])))
     spectra, paired = load_libs()
     results = mtc.match(GRID, y_grid, paired, GRID, top=10)
     s_hex = lab_to_hex(lab_of_spectrum(GRID, y_grid))
-    return results, GRID, y_grid, s_hex
+    # para mostrar/graficar se rellenan los huecos; el cruce usa los NaN
+    return results, GRID, fill_nan(y_grid), s_hex
 
 
 def _show_results(results, grid, y_grid, s_hex) -> None:
@@ -428,7 +437,7 @@ def _show_results(results, grid, y_grid, s_hex) -> None:
     top = results[0]
     # curvas de los candidatos ya re-muestreadas a la rejilla
     lib_curves = {r.name: y for r, y in lib.to_grid(
-        [r.spectrum for r in results], GRID)}
+        [r.spectrum for r in results], GRID, fwhm=lib.FWHM_DEFAULT)}
 
     st.markdown('<div class="winner">', unsafe_allow_html=True)
     w1, w2 = st.columns([3, 1])
@@ -439,6 +448,17 @@ def _show_results(results, grid, y_grid, s_hex) -> None:
     with w2:
         st.metric("Confianza (score)", f"{top.score:.2f}",
                   f"ΔE color = {top.delta_e:.1f}")
+    v = getattr(results, "verdict", None)
+    if v is not None and v.label != "identified":
+        st.warning({
+            "unknown": ("⚠ DESCONOCIDO: ningún candidato llega al umbral "
+                        f"(score ≥ {v.min_score:.2f}). La muestra puede ser "
+                        "plana, estar dominada por ruido o no estar en la "
+                        "biblioteca."),
+            "uncertain": ("⚠ DUDOSO: hay candidatos buenos pero no se "
+                          "distingue entre familias (margen "
+                          f"{v.margin:.3f} < {v.min_margin:.2f})."),
+        }.get(v.label, ""))
     swatches([("muestra", s_hex), (top.spectrum.name.split(' [')[0][:14],
                                    top.color_hex)],
              "Color (D65): muestra vs mejor candidato")
@@ -502,12 +522,13 @@ def _show_results(results, grid, y_grid, s_hex) -> None:
 # ------------------------------------------------------ página: calibración
 def page_calibrate(cal_info) -> None:
     st.title("🔧 Calibración píxel → nanómetros")
-    st.markdown('<div class="step">Tu lámpara es un <b>LED blanco</b>: su '
-                'espectro tiene dos marcas estables — el pico azul '
-                '(~450 nm) y el hump del fósforo (~560 nm). El modo '
-                '<b>LED automático</b> las detecta solo y afina con una '
-                'plantilla. Hazlo <b>una vez</b> y al cambiar el montaje.'
-                '</div>', unsafe_allow_html=True)
+    st.markdown('<div class="step">Si tienes una <b>lámpara de mercurio o '
+                'CFL</b>, sus líneas estrechas (404,7 / 435,8 / 546,1 / '
+                '577-579 nm) son lo más preciso: fijan posición y '
+                'curvatura (±1-2 nm). Con un <b>LED blanco</b> solo hay '
+                'dos marcas — pico azul ~450 nm y hump de fósforo ~560 nm '
+                '— y el resultado es afín (±5-10 nm). Hazlo <b>una vez</b> '
+                'y al cambiar el montaje.</div>', unsafe_allow_html=True)
 
     src = st.radio("Fuente del LED", ["📷 Cámara USB", "📁 Subir archivo"],
                    horizontal=True, key="fuente_cal")
@@ -521,7 +542,9 @@ def page_calibrate(cal_info) -> None:
                              key="up_cal")
         data = f.getvalue() if f is not None else None
 
-    method = st.radio("Método", ["🟦 LED automático (recomendado)",
+    method = st.radio("Método", ["🎯 Automático (líneas Hg → LED)",
+                                 "⚡ Líneas de mercurio/CFL",
+                                 "🟦 LED blanco",
                                  "📍 Anclas manuales",
                                  "📏 Rango asumido",
                                  "🔴 Cuerpo negro (solo filamento)"],
@@ -565,7 +588,10 @@ def page_calibrate(cal_info) -> None:
                 pv = Path(td) / "cal_prev.png"
                 ns = argparse.Namespace(
                     image=str(img_path), dark=None, axis=None, channel="sum",
-                    smooth=5, anchor=anchors or [], led=True, range=rng,
+                    smooth=5, anchor=anchors or [],
+                    led=method.startswith("🟦"),
+                    lines=method.startswith("⚡"),
+                    range=rng,
                     blackbody=bb, output=str(out_path), preview=str(pv))
                 out = _run_cli(cmd_calibrate, ns)
                 st.code(out, language=None)

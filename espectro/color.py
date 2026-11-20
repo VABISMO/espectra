@@ -46,7 +46,17 @@ def lab_of_spectrum(nm: np.ndarray, reflectance: np.ndarray) -> tuple[float, flo
                         for i in range(3))
     s = np.interp(grid, d65_wl, spd, left=0.0, right=0.0)
     r = np.interp(grid, nm, reflectance, left=np.nan, right=np.nan)
-    r = np.nan_to_num(r, nan=0.0)
+    # huecos (lámpara débil / fuera de rango): interpolamos entre los
+    # puntos válidos; rellenar con 0 inventaría una ausencia total de
+    # reflectancia en esa banda y desplazaría el color.
+    ok = np.isfinite(r)
+    if ok.sum() >= 2:
+        gx = np.arange(r.size, dtype=float)
+        r = np.interp(gx, gx[ok], r[ok])
+    elif ok.sum() == 1:
+        r = np.full_like(r, float(r[ok][0]))
+    else:
+        r = np.zeros_like(r)
     r = np.clip(r, 0.0, 1.0)
 
     def tri(v: np.ndarray) -> np.ndarray:

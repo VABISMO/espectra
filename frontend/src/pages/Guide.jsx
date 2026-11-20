@@ -10,8 +10,11 @@ export default function Guide() {
   ]
   const SIGNALS = [['gd.sig1', 'gd.sig1d'], ['gd.sig2', 'gd.sig2d'],
     ['gd.sig3', 'gd.sig3d']]
-  const SCORES = [['> 0.85 · ΔE < 8', 'gd.sc1'], ['0.65 – 0.85', 'gd.sc2'],
-    ['< 0.65', 'gd.sc3']]
+  const SCORES = [
+    ['score ≥ 0.70 · margen ≥ 0.06', 'gd.sc1'],
+    ['score ≥ 0.70 · margen < 0.06', 'gd.sc2'],
+    ['score < 0.70', 'gd.sc3'],
+  ]
 
   return (
     <>

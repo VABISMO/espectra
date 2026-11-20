@@ -2,7 +2,7 @@
 PY := .venv/bin/python
 PIP := .venv/bin/pip
 
-.PHONY: install install-libs run dev build test demo lint fmt clean
+.PHONY: install install-libs run dev build test demo bench lint fmt clean
 
 install:            ## crear venv + dependencias + compilar interfaz
 	./install.sh
@@ -24,6 +24,9 @@ test:               ## tests end-to-end (motor + API + cámara)
 
 demo:               ## análisis sintético completo → PASS
 	$(PY) -m espectro demo
+
+bench:              ## validación LOO: top-1/top-3 + falsos positivos
+	$(PY) scripts/benchmark.py --n 200 --negatives 40 --sweep
 
 lint:               ## revisión estática
 	$(PIP) install -q ruff

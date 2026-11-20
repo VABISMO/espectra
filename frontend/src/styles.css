@@ -147,6 +147,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
 .chip.warn { background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.4); color: #fcd77a; }
 .chip.info { background: rgba(76, 201, 240, 0.1); border-color: rgba(76, 201, 240, 0.4); color: #9be4ff; }
 .chip.violet { background: rgba(139, 92, 246, 0.12); border-color: rgba(139, 92, 246, 0.45); color: #c9b6ff; }
+.chip.error { background: rgba(251, 113, 133, 0.1); border-color: rgba(251, 113, 133, 0.45); color: #ffb3bd; }
 
 /* ------------------------------ live view */
 .live-wrap { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--line-strong); background: #05070d; }

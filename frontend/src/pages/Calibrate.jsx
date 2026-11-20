@@ -5,6 +5,8 @@ import CameraPanel from '../components/CameraPanel.jsx'
 import { useLang } from '../lang.jsx'
 
 const METHODS = [
+  { id: 'auto', t: 'cal.m.auto.t', d: 'cal.m.auto.d' },
+  { id: 'lines', t: 'cal.m.lines.t', d: 'cal.m.lines.d' },
   { id: 'led', t: 'cal.m.led.t', d: 'cal.m.led.d' },
   { id: 'anchors', t: 'cal.m.anchors.t', d: 'cal.m.anchors.d' },
   { id: 'range', t: 'cal.m.range.t', d: 'cal.m.range.d' },
@@ -13,7 +15,7 @@ const METHODS = [
 
 export default function Calibrate({ status, refresh }) {
   const { t } = useLang()
-  const [method, setMethod] = useState('led')
+  const [method, setMethod] = useState('auto')
   const [anchors, setAnchors] = useState([[0, 450], [1000, 700]])
   const [range, setRange] = useState([400, 700])
   const [bb, setBb] = useState(3000)
@@ -129,9 +131,14 @@ export default function Calibrate({ status, refresh }) {
           <div className="kicker">{t('cal.resultKicker')}</div>
           <h2>{t('cal.ok')}</h2>
           <div className="log" style={{ marginTop: 14 }}>
-{`${t('cal.log.mode', { v: out.meta.mode })}
+{`${t('cal.log.mode', { v: t(`mode.${out.meta.mode}`) })}
 ${t('cal.log.coeffs', { v: out.coeffs.join(', ') })}
 ${t('cal.log.formula')}` +
+              (out.meta.lines
+                ? `\n${t('cal.log.lines', {
+                  v: out.meta.lines.map((l) => `${l.nm} nm@p${l.pixel.toFixed(0)}`)
+                    .join(' · '),
+                })}` : '') +
               (out.meta.led_peaks_pixel
                 ? `\n${t('cal.log.peaks', {
                   a: out.meta.led_peaks_pixel[0],

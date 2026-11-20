@@ -273,18 +273,73 @@ def load_library(root: str | Path,
     return unique
 
 
-def to_grid(specs: list[Spectrum], grid: np.ndarray) -> list[tuple[Spectrum, np.ndarray]]:
-    """Re-muestrea cada espectro a la rejilla común; descarta solapes < 60%."""
+# Resolución espectral típica del instrumento (FWHM, nm).  La USGS se
+# muestrea a 0.5-5 nm y la cámara resuelve ~5-10 nm: sin degradar, las
+# referencias parecen "más nítidas" de lo que el instrumento puede ver.
+FWHM_DEFAULT = 7.0
+
+
+def degrade_resolution(nm: np.ndarray, y: np.ndarray,
+                       fwhm_nm: float | None = FWHM_DEFAULT) -> np.ndarray:
+    """Convoluciona una curva con una gaussiana de FWHM `fwhm_nm`.
+
+    Aproximación de la función de línea de instrumento (ILS) como gaussiana.
+    `fwhm_nm <= 0` o None devuelve la curva sin tocar; si el muestreo de
+    origen ya es más grueso que el instrumento tampoco hay nada que hacer.
+    """
+    if not fwhm_nm or fwhm_nm <= 0:
+        return np.asarray(y, dtype=float)
+    nm = np.asarray(nm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if nm.size < 5 or nm.size != y.size:
+        return y
+    d = np.diff(nm)
+    d = d[d > 0]
+    if d.size == 0:
+        return y
+    step = float(np.median(d))
+    if step <= 0 or step >= float(fwhm_nm):
+        return y                      # ya más grueso que el instrumento
+    sigma = float(fwhm_nm) / 2.35482  # FWHM = 2·sqrt(2·ln2)·σ
+    s_steps = sigma / step
+    if s_steps < 0.25:
+        return y
+    r = int(np.ceil(3.0 * s_steps))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1, dtype=float) / s_steps) ** 2)
+    k /= k.sum()
+    padded = np.pad(y, r, mode="edge")   # sin ceros: no inventa bandas
+    return np.convolve(padded, k, mode="valid")
+
+
+def to_grid(specs: list[Spectrum], grid: np.ndarray,
+            fwhm: float | None = FWHM_DEFAULT) -> list[tuple[Spectrum, np.ndarray]]:
+    """Re-muestrea cada espectro a la rejilla común; descarta solapes < 60%.
+
+    Antes de re-muestrear, `fwhm` degrada cada referencia a la resolución
+    espectral del instrumento (gaussiana de FWHM `fwhm` nm): la muestra ya
+    llega medida con la función de línea del tubo, así que comparar contra
+    referencias sin degradar favorece artificialmente a las que por azar
+    tienen la forma justa.  `fwhm=None` lo desactiva.
+    """
     res: list[tuple[Spectrum, np.ndarray]] = []
     need = grid.size
+    lo, hi = float(grid.min()), float(grid.max())
     for s in specs:
-        m = (s.nm >= grid.min()) & (s.nm <= grid.max())
+        m = (s.nm >= lo) & (s.nm <= hi)
         if m.sum() < max(8, int(0.6 * need)):
             continue
-        y = np.interp(grid, s.nm[m], s.reflectance[m],
-                      left=np.nan, right=np.nan)
-        if np.isnan(y).mean() > 0.4:
+        y = degrade_resolution(s.nm, s.reflectance, fwhm) if fwhm \
+            else s.reflectance
+        yg = np.interp(grid, s.nm[m], y[m], left=np.nan, right=np.nan)
+        if np.isnan(yg).mean() > 0.4:
             continue
-        y = np.nan_to_num(y, nan=float(np.nanmean(y)))
-        res.append((s, y))
+        # huecos: se extiende el último valor medido (no se rellena con la
+        # media, eso inventaría una meseta plana en mitad de la curva)
+        ok = np.isfinite(yg)
+        if not ok.all():
+            if not ok.any():
+                continue
+            gx = np.arange(need, dtype=float)
+            yg = np.interp(gx, gx[ok], yg[ok])
+        res.append((s, yg))
     return res

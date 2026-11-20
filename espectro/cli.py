@@ -20,7 +20,7 @@ from . import image as im
 from . import library as lib
 from . import match as mtc
 from . import plotting as pl
-from .reflectance import pseudo_reflectance, resample
+from .reflectance import fill_nan, linearize, pseudo_reflectance, resample
 
 ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = ROOT / "data" / "libraries"
@@ -66,6 +66,8 @@ def cmd_extract(args: argparse.Namespace) -> int:
 def cmd_calibrate(args: argparse.Namespace) -> int:
     lang = getattr(args, "lang", "es")
     tr = lambda es, en: es if lang == "es" else en
+    lines_mode = bool(getattr(args, "lines", False))
+    led_mode = bool(getattr(args, "led", False))
     img = im.load_gray(args.image, channel=args.channel)
     dark = im.load_gray(args.dark, channel=args.channel) if args.dark else None
     ext = im.extract_profile(img, axis=args.axis, dark=dark,
@@ -102,31 +104,66 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
         coeffs = _range_init(pixel, inten, nm_range, meta, lang)[0]
         meta["mode"] = "range"
 
-    else:                                     # LED blanco (por defecto)
-        led_peaks = cal.detect_led_peaks(pixel, inten)
-        if led_peaks is not None:
-            p_blue, p_phos = led_peaks
-            coeffs = cal.poly_from_anchors([(p_blue, 450.0),
-                                            (p_phos, 560.0)])
-            meta["mode"] = "led"
-            meta["led_peaks_pixel"] = [p_blue, p_phos]
-            meta["led_peaks_nm"] = [450.0, 560.0]
-            print(tr(f"  picos LED detectados: azul p={p_blue:.0f} (~450 nm), "
-                      f"fósforo p={p_phos:.0f} (~560 nm)",
-                      f"  LED peaks found: blue p={p_blue:.0f} (~450 nm), "
-                      f"phosphor p={p_phos:.0f} (~560 nm)"))
-            coeffs, corr = cal.refine_led(coeffs, pixel, inten)
-            meta["led_corr"] = corr
-            if np.isfinite(corr):
-                print(tr(f"  refinado con plantilla de LED: r={corr:.3f}",
-                          f"  refined with LED template: r={corr:.3f}"))
+    else:
+        # Líneas de mercurio/CFL primero (son estrechas: fijan de verdad
+        # la curvatura) y, si no las hay, el LED blanco.
+        if lines_mode:
+            line_fit = cal.fit_hg_lines(pixel, inten, min_lines=2,
+                                        allow_pair=True)
+        elif led_mode:
+            line_fit = None
         else:
-            print(tr("  aviso: no se detectaron los dos picos del LED; "
-                      "se usa el rango asumido (menos preciso)",
-                      "  warning: LED peaks not found; using the assumed "
-                      "range (less accurate)"))
-            coeffs = _range_init(pixel, inten, nm_range, meta, lang)[0]
-            meta["mode"] = "range_fallback"
+            line_fit = cal.fit_hg_lines(pixel, inten, min_lines=3,
+                                        allow_pair=False)
+
+        if line_fit is not None:
+            coeffs, lmeta = line_fit
+            meta.update(lmeta)
+            meta["mode"] = "lines"
+            lines_txt = ", ".join(
+                f"{d['nm']:g} nm@p{d['pixel']:.0f}" for d in lmeta["lines"])
+            print(tr(f"  {len(lmeta['lines'])} líneas de mercurio/CFL: "
+                     f"{lines_txt}",
+                     f"  {len(lmeta['lines'])} mercury/CFL lines: "
+                     f"{lines_txt}"))
+            if lmeta["lines_classic_pair"]:
+                print(tr("  (solo dos picos: se asume el par clásico "
+                         "435,8/546,1 — confirma que la lámpara es de "
+                         "mercurio/CFL)",
+                         "  (only two peaks: assuming the classic "
+                         "435.8/546.1 pair — make sure the lamp really is "
+                         "mercury/CFL)"))
+
+        else:
+            if lines_mode:
+                print(tr("  aviso: no se detectaron líneas de mercurio; "
+                         "se usa el LED blanco",
+                         "  warning: no mercury lines found; falling back "
+                         "to the white LED"))
+            led_peaks = cal.detect_led_peaks(pixel, inten)
+            if led_peaks is not None:
+                p_blue, p_phos = led_peaks
+                coeffs = cal.poly_from_anchors([(p_blue, 450.0),
+                                                (p_phos, 560.0)])
+                meta["mode"] = "led"
+                meta["led_peaks_pixel"] = [p_blue, p_phos]
+                meta["led_peaks_nm"] = [450.0, 560.0]
+                print(tr(f"  picos LED detectados: azul p={p_blue:.0f} (~450 nm), "
+                          f"fósforo p={p_phos:.0f} (~560 nm)",
+                          f"  LED peaks found: blue p={p_blue:.0f} (~450 nm), "
+                          f"phosphor p={p_phos:.0f} (~560 nm)"))
+                coeffs, corr = cal.refine_led(coeffs, pixel, inten)
+                meta["led_corr"] = corr
+                if np.isfinite(corr):
+                    print(tr(f"  refinado con plantilla de LED: r={corr:.3f}",
+                              f"  refined with LED template: r={corr:.3f}"))
+            else:
+                print(tr("  aviso: no se detectaron los dos picos del LED; "
+                          "se usa el rango asumido (menos preciso)",
+                          "  warning: LED peaks not found; using the assumed "
+                          "range (less accurate)"))
+                coeffs = _range_init(pixel, inten, nm_range, meta, lang)[0]
+                meta["mode"] = "range_fallback"
 
     cal.save_cal(args.output, coeffs, meta)
     print(tr(f"  calibración guardada en {args.output}",
@@ -134,9 +171,11 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     print(f"    nm(p) = {np.array2string(np.asarray(coeffs), precision=4)}")
 
     if args.preview:
-        model_fn = cal.led_model if meta.get("mode") == "led" else None
+        mode = meta.get("mode")
+        model_fn = {"led": cal.led_model, "lines": cal.hg_model}.get(mode)
+        model_label = {"led": "plantilla LED", "lines": "líneas Hg/CFL"}.get(mode)
         pl.plot_calibration(pixel, inten, coeffs, T, corr, args.preview,
-                            model_fn=model_fn)
+                            model_fn=model_fn, model_label=model_label)
         print(tr(f"  vista previa en {args.preview}",
                   f"  preview written to {args.preview}"))
     return 0
@@ -187,11 +226,12 @@ def cmd_match(args: argparse.Namespace) -> int:
             print("  ERROR: muestra y bombilla tienen distinto número de "
                   "puntos; extráelas igual (--rows/--smooth)", file=sys.stderr)
             return 2
-        y = pseudo_reflectance(s_iy, lamp_iy, smooth=args.smooth)
+        y = pseudo_reflectance(s_iy, lamp_iy, smooth=args.smooth,
+                               gamma=args.gamma)
     else:
         print("  aviso: sin bombilla de referencia se usa la intensidad "
               "normalizada (sin dividir lámpara/sensor)")
-        y = np.clip(s_iy, 0, None)
+        y = np.clip(linearize(s_iy, args.gamma), 0, None)
         y = y / y.max() if y.max() > 0 else y
 
     # ---- 2. píxel -> nm
@@ -206,13 +246,13 @@ def cmd_match(args: argparse.Namespace) -> int:
         nm = s_px
 
     grid = np.arange(args.grid[0], args.grid[1] + 1e-9, args.grid[2])
-    y_grid = resample(nm, y, grid)
+    y_grid = resample(nm, y, grid)          # conserva los NaN de la máscara
     ok = np.isfinite(y_grid)
     if ok.sum() < 0.5 * grid.size:
         print(f"  ERROR: solo {ok.sum()}/{grid.size} puntos caen dentro del "
-              "rango de la calibración", file=sys.stderr)
+              "rango de la calibración o con lámpara suficiente", file=sys.stderr)
         return 2
-    y_grid = np.nan_to_num(y_grid, nan=float(np.nanmean(y_grid[ok])))
+    y_show = fill_nan(y_grid)               # versión para gráficos/color
 
     # ---- 3. biblioteca
     cats = set(args.categories.split(",")) if args.categories else None
@@ -220,10 +260,13 @@ def cmd_match(args: argparse.Namespace) -> int:
     if not spectra:
         print(f"  ERROR: sin espectros en {args.library}", file=sys.stderr)
         return 2
-    paired = lib.to_grid(spectra, grid)
+    fwhm = None if args.fwhm is None or args.fwhm <= 0 else float(args.fwhm)
+    paired = lib.to_grid(spectra, grid, fwhm=fwhm)
     print(f"  muestra: {args.sample}")
     print(f"  biblioteca: {len(spectra)} espectros cargados, "
           f"{len(paired)} comparables en {grid[0]:.0f}-{grid[-1]:.0f} nm")
+    print("  referencias degradadas a "
+          + (f"FWHM {fwhm:g} nm" if fwhm else "su resolución nativa"))
 
     # ---- 4. comparar
     results = mtc.match(grid, y_grid, paired, grid, top=args.top)
@@ -242,15 +285,38 @@ def cmd_match(args: argparse.Namespace) -> int:
 
     lib_curves = {r.name: y for r, y in paired}
     png = out / "comparacion.png"
-    pl.plot_matches(grid, y_grid, results,
+    pl.plot_matches(grid, y_show, results,
                     {k: v for k, v in lib_curves.items()
                      for r in results if r.spectrum.name == k},
                     png, title=Path(args.sample).name)
     pl.plot_top_matches_table(results, out / "top_coincidencias.png")
 
     from .color import lab_of_spectrum, lab_to_hex
-    s_hex = lab_to_hex(lab_of_spectrum(grid, y_grid))
-    print(f"\n  color de la muestra (D65): {s_hex}")
+    s_hex = lab_to_hex(lab_of_spectrum(grid, y_show))
+    print(f"\n  puntos válidos: {int(ok.sum())}/{grid.size} "
+          f"({100.0 * ok.mean():.0f}% de la banda)")
+    print(f"  color de la muestra (D65): {s_hex}")
+    v = results.verdict
+    lang = getattr(args, "lang", "es")
+    tr = lambda es, en: es if lang == "es" else en
+    names = {"identified": tr("IDENTIFICADO", "IDENTIFIED"),
+             "uncertain": tr("DUDOSO", "UNCERTAIN"),
+             "unknown": tr("DESCONOCIDO", "UNKNOWN")}
+    print(f"  veredicto: {names.get(v.label, v.label.upper())}  "
+          f"(score {v.score:.3f} · margen entre familias {v.margin:.3f} · "
+          f"mínimos {v.min_score:.2f}/{v.min_margin:.2f} · {v.n} candidatos)")
+    if v.label == "unknown":
+        print("  " + tr("→ ningún candidato llega al umbral: la muestra es "
+                        "plana, está dominada por ruido o el material no "
+                        "está en la biblioteca",
+                        "→ no candidate reaches the threshold: the sample is "
+                        "featureless, noise-dominated, or the material is "
+                        "not in the library"))
+    elif v.label == "uncertain":
+        print("  " + tr("→ hay candidatos buenos pero no se distingue entre "
+                        "familias con 400-700 nm",
+                        "→ good candidates exist but families cannot be "
+                        "told apart in 400-700 nm"))
     print(f"  TOP {len(results)} coincidencias:")
     for i, r in enumerate(results, 1):
         print(f"   {i:>2}. {r.score:.3f}  ΔE={r.delta_e:5.1f}  {r.color_hex}  "
@@ -350,8 +416,8 @@ def cmd_demo(args: argparse.Namespace) -> int:
     # --- calibración automática por picos del LED blanco
     cal_args = argparse.Namespace(
         image=str(out / "demo_bombilla.png"), dark=None, axis=None,
-        channel="sum", smooth=5, anchor=[], led=True, range=None,
-        blackbody=None, output=str(CAL_DIR / "demo_cal.json"),
+        channel="sum", smooth=5, anchor=[], led=False, lines=False,
+        range=None, blackbody=None, output=str(CAL_DIR / "demo_cal.json"),
         preview=str(out / "demo_calibracion.png"))
     if cmd_calibrate(cal_args) != 0:
         return 1
@@ -374,7 +440,8 @@ def cmd_demo(args: argparse.Namespace) -> int:
     mt_args = argparse.Namespace(
         sample=ex_args.output, lamp=ex_lamp.output, cal=cal_args.output,
         library=str(LIB_DIR), grid=(400.0, 700.0, 5.0), top=5,
-        categories="", smooth=5, domain="pixel",
+        categories="", smooth=5, domain="pixel", gamma=1.0,
+        fwhm=lib.FWHM_DEFAULT,
         out=str(out / "demo_resultado"))
     rc = cmd_match(mt_args)
     if rc != 0:
@@ -422,9 +489,14 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--anchor", nargs=2, type=float, action="append",
                    metavar=("PIXEL", "NM"), default=[],
                    help="ancla conocida (repetible)")
+    c.add_argument("--lines", action="store_true",
+                   help="calibración por líneas de mercurio/CFL "
+                        "(404,7/435,8/546,1/577-579 nm) — la vía precisa; "
+                        "con solo dos picos se asume el par 435,8/546,1")
     c.add_argument("--led", action="store_true",
-                   help="calibración por picos del LED blanco "
-                        "(POR DEFECTO: azul 450 nm + fósforo 560 nm)")
+                   help="fuerza el modo LED (por defecto se intentan "
+                        "primero las líneas de mercurio/CFL y, si no las "
+                        "hay, se usa el LED: azul 450 nm + fósforo 560 nm)")
     c.add_argument("--range", nargs=2, type=float, default=None,
                    metavar=("NM0", "NM1"),
                    help="asumir la banda activa entre estos nm "
@@ -451,6 +523,14 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--categories", default="",
                    help="filtrar por subcadena, p.ej. mineral,vegeta")
     m.add_argument("--smooth", type=int, default=5)
+    m.add_argument("--fwhm", type=float, default=lib.FWHM_DEFAULT,
+                   metavar="NM",
+                   help="resolución del instrumento (FWHM nm) a la que se "
+                        f"degradan las referencias antes de comparar; 0 = "
+                        f"sin degradar (defecto {lib.FWHM_DEFAULT:g})")
+    m.add_argument("--gamma", type=float, default=1.0,
+                   help="gamma de la cámara antes de dividir (2.2 = típico "
+                        "de UVC de 8 bits; 1.0 = sin linealizar)")
     m.add_argument("--domain", choices=["pixel", "nm"], default="pixel")
     m.add_argument("--out", default=str(OUT_DIR / "ultima"))
     m.set_defaults(func=cmd_match)

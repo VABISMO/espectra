@@ -9,15 +9,37 @@ Métricas combinadas (todas invariantes a la escala de intensidad):
           química real y donde se ignora el color global.
 
 score = 1 - (w_sam·cos + w_cr·r_cr)/(... )   → 1.0 = coincidencia perfecta.
+
+Los puntos donde la muestra es NaN (zonas sin lámpara, fuera de la
+calibración) se descartan ANTES de comparar: se evalúa solo el subconjunto
+válido, igual para la muestra y para cada candidato.
+
+Y como casi todos los minerales son suaves en 400-700 nm, el resultado
+lleva un **veredicto** (`MatchOutcome.verdict`) con un umbral de score y
+de margen: si nada llega a ellos se responde *unknown* en lugar de
+entregar el primer candidato como si fuera una identificación.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
 
 from .color import delta_e, lab_of_spectrum, lab_to_hex
 from .library import Spectrum
+
+
+def family_key(name: str) -> str:
+    """Clave de familia de un nombre: primera palabra sin puntuación.
+
+    Sirve para no confundir "dos muestras del mismo mineral" con
+    "dos materiales distintos empatados": si el mejor y el segundo
+    mejor candidato son la misma familia, el margen real es contra el
+    primer candidato de otra familia.
+    """
+    tok = (name or "").strip().split()
+    return re.sub(r"[^a-z0-9]", "", tok[0].lower()) if tok else ""
 
 
 def upper_hull(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -101,6 +123,97 @@ def band_depths(cr: np.ndarray) -> np.ndarray:
     return 1.0 - np.asarray(cr, dtype=float)
 
 
+# --------------------------------------------------------------- veredicto
+# Umbrales por defecto: fijados con `scripts/benchmark.py --sweep`, no a
+# ojo.  Con 200-300 muestras sintéticas ruidosas y 40-60 controles negativos:
+#   (0.70, 0.06) → 0 % de falsos positivos, precisión por familia 86-100 %
+#                  y ~7-13 % de las muestras declaradas "identified".
+#   Bajar el margen a 0.02 sube el recall pero dispara los falsos
+#   positivos al 5-8 %.
+# No son probabilidades: son cortes sobre el score combinado.
+VERDICT_MIN_SCORE = 0.70
+VERDICT_MIN_MARGIN = 0.06
+
+VERDICT_LABELS = ("identified", "uncertain", "unknown")
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """¿Hay material suficiente en la biblioteca para afirmar algo?
+
+    identified : el mejor candidato supera `min_score` y se separa del
+                 primer candidato de otra familia por `min_margin`.
+    uncertain  : hay candidatos buenos pero no se distingue entre familias
+                 (p. ej. calcita vs cuarzo en 400-700 nm).
+    unknown    : ningún candidato llega al mínimo (muestra plana, ruido,
+                 material ausente de la biblioteca) o no hay candidatos.
+    """
+    label: str
+    score: float              # score del mejor candidato
+    margin: float             # s1 - primer candidato de otra familia
+    runner_up: float          # s1 - s2 (aunque sea de la misma familia)
+    n: int                    # candidatos evaluados
+    min_score: float
+    min_margin: float
+
+    @property
+    def key(self) -> str:
+        return {"identified": "an.verdict.identified",
+                "uncertain": "an.verdict.uncertain"}.get(
+                    self.label, "an.verdict.unknown")
+
+    def as_dict(self) -> dict:
+        return {
+            "label": self.label,
+            "score": round(self.score, 4),
+            "margin": round(self.margin, 4),
+            "runner_up": round(self.runner_up, 4),
+            "n": self.n,
+            "min_score": self.min_score,
+            "min_margin": self.min_margin,
+        }
+
+
+class MatchOutcome(list):
+    """Lista de MatchResult con el veredicto adjunto (`outcome.verdict`).
+
+    Subclase de list para que el código existente (`results[0]`,
+    `len(results)`, `for r in results`) siga funcionando igual.
+    """
+
+    def __init__(self, results: list[MatchResult] | None = None,
+                 verdict: Verdict | None = None):
+        super().__init__(results or [])
+        self.verdict = verdict or Verdict(
+            "unknown", 0.0, 0.0, 0.0, 0,
+            VERDICT_MIN_SCORE, VERDICT_MIN_MARGIN)
+
+
+def assess(results: list[MatchResult],
+           min_score: float = VERDICT_MIN_SCORE,
+           min_margin: float = VERDICT_MIN_MARGIN) -> Verdict:
+    """Clasifica el ranking completo (sin truncar) en identified/uncertain/unknown."""
+    if not results:
+        return Verdict("unknown", 0.0, 0.0, 0.0, 0, min_score, min_margin)
+    s1 = float(results[0].score)
+    runner = float(results[1].score) if len(results) > 1 else s1
+    f1 = family_key(results[0].spectrum.name)
+    margin = 0.0
+    for r in results[1:]:
+        if family_key(r.spectrum.name) != f1:
+            margin = s1 - float(r.score)
+            break
+
+    if not np.isfinite(s1) or s1 < min_score:
+        label = "unknown"
+    elif margin < min_margin:
+        label = "uncertain"
+    else:
+        label = "identified"
+    return Verdict(label, s1, margin, s1 - runner, len(results),
+                   min_score, min_margin)
+
+
 def match(
     sample_nm: np.ndarray,
     sample_y: np.ndarray,
@@ -111,30 +224,50 @@ def match(
     w_cont: float = 0.40,
     w_color: float = 0.25,
     min_r: float = -1.0,
-) -> list[MatchResult]:
+    min_score: float = VERDICT_MIN_SCORE,
+    min_margin: float = VERDICT_MIN_MARGIN,
+) -> MatchOutcome:
     """Compara el muestreo (en la rejilla `grid`) con la biblioteca ya
     re-muestreada (lista de (Spectrum, y_en_grid)).
 
     score = w_sam·cos(SAM) + w_cont·(r_continuo+1)/2 + w_color·(1-ΔE/60)
             todo ello con penalización por desajuste de profundidad de banda.
+
+    Los NaN de `sample_y` (lámpara débil, calibración incompleta) se
+    excluyen de todas las métricas en lugar de tratarse como cero.
+
+    Devuelve un `MatchOutcome` (lista de `MatchResult`, truncada a `top`)
+    con `.verdict`: `min_score` y `min_margin` fijan el corte entre
+    identified / uncertain / unknown **sin filtrar** candidatos
+    (`min_r` sí los filtra).
     """
     s = np.asarray(sample_y, dtype=float)
     if s.shape != grid.shape:
         raise ValueError("el espectro de muestra debe estar en la rejilla")
-    s_cr = continuum_removal(grid, s)
-    s_lab = lab_of_spectrum(grid, s)
+    valid = np.isfinite(s)
+    if int(valid.sum()) < 8:
+        raise ValueError(
+            f"solo {int(valid.sum())}/{grid.size} puntos válidos: la lámpara "
+            "no cubre la banda o falta calibración")
+    g = grid[valid]
+    sv = s[valid]
+    s_cr = continuum_removal(g, sv)
+    s_lab = lab_of_spectrum(g, sv)
 
     results: list[MatchResult] = []
     for spec, y in library:
-        r_raw = pearson(s, y)
+        yv = np.asarray(y, dtype=float)[valid]
+        if yv.size != sv.size:
+            continue
+        r_raw = pearson(sv, yv)
         if not np.isfinite(r_raw) or r_raw < min_r:
             continue
-        sam = spectral_angle(s, y)
-        y_cr = continuum_removal(grid, y)
+        sam = spectral_angle(sv, yv)
+        y_cr = continuum_removal(g, yv)
         r_cr = pearson(s_cr, y_cr)
         depth_diff = float(np.max(np.abs(band_depths(s_cr) - band_depths(y_cr))))
 
-        y_lab = lab_of_spectrum(grid, y)
+        y_lab = lab_of_spectrum(g, yv)
         d_e = delta_e(s_lab, y_lab)
         color_term = float(np.clip(1.0 - d_e / 60.0, 0.0, 1.0))
 
@@ -157,4 +290,5 @@ def match(
 
     # el color de la muestra lo calcula quien llama con lab_of_spectrum()
     results.sort(key=lambda m: m.score, reverse=True)
-    return results[:top]
+    verdict = assess(results, min_score=min_score, min_margin=min_margin)
+    return MatchOutcome(results[:top], verdict)

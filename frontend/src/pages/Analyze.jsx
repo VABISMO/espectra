@@ -10,7 +10,7 @@ export default function Analyze({ status, refresh, go }) {
   const { t } = useLang()
   const [cfg, setCfg] = useState({
     axis: 'auto', channel: 'sum', smooth: 5, frac: 0.25,
-    rowsAuto: true, rows: [0, 400],
+    rowsAuto: true, rows: [0, 400], gammaApply: false,
   })
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -42,6 +42,7 @@ export default function Analyze({ status, refresh, go }) {
         slot: 'sample',
         axis: cfg.axis, channel: cfg.channel, smooth: cfg.smooth,
         frac: cfg.frac, rows: cfg.rowsAuto ? null : cfg.rows, top: 10,
+        gamma: cfg.gammaApply ? 2.2 : 1.0,
       })
       setResult(r)
     } catch (e) {
@@ -161,6 +162,12 @@ export default function Analyze({ status, refresh, go }) {
               onChange={(e) => set('rowsAuto', e.target.checked)} />
             {t('an.autoRows')}
           </label>
+          <label title="si la cámara de 8 bits aplica gamma, actívalo antes de dividir"
+            style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#a3b0cc', fontSize: 13 }}>
+            <input type="checkbox" checked={cfg.gammaApply} style={{ width: 15, height: 15 }}
+              onChange={(e) => set('gammaApply', e.target.checked)} />
+            {t('an.gammaApply')}
+          </label>
           {!cfg.rowsAuto && (
             <>
               <input type="number" value={cfg.rows[0]} style={{ width: 90 }}
@@ -188,13 +195,33 @@ export default function Analyze({ status, refresh, go }) {
           {result.brightness < 0.03 && (
             <div className="alert error"><Html k="an.darkImage" /></div>
           )}
+          {result.verdict && result.verdict.label !== 'identified' && (
+            <div className={`alert ${result.verdict.label === 'unknown' ? 'error' : 'warn'}`}>
+              <Html k={`an.verdict.note.${result.verdict.label}`} v={{
+                s: result.verdict.score.toFixed(3),
+                ms: result.verdict.min_score.toFixed(2),
+                m: result.verdict.margin.toFixed(3),
+                mm: result.verdict.min_margin.toFixed(2),
+              }} />
+            </div>
+          )}
           <div className="winner" ref={resultRef}>
             <div className="winner-inner">
               <ScoreRing score={winner.score} />
               <div style={{ minWidth: 0 }}>
-                <div className="kicker">{t('an.identified')}</div>
+                <div className="kicker">
+                  {result.verdict?.label === 'identified'
+                    ? t('an.identified')
+                    : t(`an.verdict.${result.verdict?.label}`)}
+                </div>
                 <div className="winner-name">{winner.name}</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  {result.verdict && (
+                    <span className={`chip ${result.verdict.label === 'identified' ? 'ok'
+                      : result.verdict.label === 'uncertain' ? 'warn' : 'error'}`}>
+                      {t(`an.verdict.${result.verdict.label}`)}
+                    </span>
+                  )}
                   <span className="chip">{winner.category || t('an.noCategory')}</span>
                   <span className="chip info">{winner.source}</span>
                   <span className="chip violet">ΔE {winner.delta_e}</span>
@@ -202,6 +229,11 @@ export default function Analyze({ status, refresh, go }) {
                   {result.has_lamp
                     ? <span className="chip ok">{t('an.withLamp')}</span>
                     : <span className="chip warn">{t('an.noLamp')}</span>}
+                  {typeof result.coverage === 'number' && (
+                    <span className={`chip ${result.coverage < 0.95 ? 'warn' : 'ok'}`}>
+                      {t('an.coverage', { v: Math.round(result.coverage * 100) })}
+                    </span>
+                  )}
                 </div>
                 <div className="swatch-row" style={{ marginTop: 16 }}>
                   <div className="swatch">

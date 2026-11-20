@@ -12,6 +12,7 @@ cd espectra
 make run                # http://localhost:8000
 make test               # must be green before a PR
 make demo               # end-to-end synthetic analysis
+make bench              # leave-one-out accuracy + false-positive rates
 ```
 
 ## Layout
@@ -21,7 +22,7 @@ make demo               # end-to-end synthetic analysis
 | `espectro/` | Python engine: camera, extraction, calibration, color, libraries, matching |
 | `server.py` | FastAPI REST API + static frontend host |
 | `frontend/` | React + Vite UI (Spanish/English via `src/i18n.js`) |
-| `scripts/` | Data-fetch scripts for reference libraries |
+| `scripts/` | Data-fetch scripts for reference libraries + `benchmark.py` (LOO validation) |
 | `tests/run_tests.py` | End-to-end suite (no pytest needed) |
 
 ## Guidelines
@@ -30,6 +31,10 @@ make demo               # end-to-end synthetic analysis
   **both** `en` and `es`. Backend user-facing messages use `_m(lang, es, en)`.
 - **Tests**: every behaviour change needs a `check(...)` in
   `tests/run_tests.py` (or an assertion in `demo`).
+- **Scoring / thresholds**: touching the score, the verdict cutoffs
+  (`VERDICT_MIN_SCORE`, `VERDICT_MIN_MARGIN`) or the measurement model
+  means running `make bench` again and updating the numbers in **both**
+  READMEs — they are published as project claims.
 - **Style**: `make lint` must pass (`ruff --select F,E9`).
 - **Data**: never commit `data/raw/` (regenerable). New spectra go in
   `data/libraries/<collection>/` as `wavelength_nm,reflectance` CSV with

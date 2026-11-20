@@ -43,6 +43,9 @@ jobs:
       - name: Tests (motor + API + cámara)
         run: python tests/run_tests.py
 
+      - name: Benchmark LOO (validación sintética del pipeline)
+        run: python scripts/benchmark.py --n 40 --negatives 8
+
       - name: La interfaz se sirve
         run: |
           python - <<'PY'
