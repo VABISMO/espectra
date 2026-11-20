@@ -357,10 +357,13 @@ def test_hg_lines() -> None:
         c2, m2 = fit2
         e2 = float(np.max(np.abs(np.polyval(c2, p) - true_nm)))
         pk2 = cal.detect_narrow_peaks(p, two)
+        used_nm = sorted(d["nm"] for d in m2["lines"])
         check("par clásico con error < 2 nm", e2 < 2.0,
               f"err={e2:.2f} nm · picos={[round(q, 1) for q, _ in pk2]} · "
               f"usadas={[(d['pixel'], d['nm']) for d in m2['lines']]} · "
               f"c2={np.array2string(c2, precision=4)}")
+        check("elige el par 435,8/546,1 y no otro",
+              used_nm == [435.83, 546.07], str(used_nm))
         check("avisa de que asume el par", m2["lines_classic_pair"])
 
     # un LED blanco (pico ancho + hump) NO puede colarse como líneas

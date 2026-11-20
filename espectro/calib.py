@@ -295,6 +295,23 @@ def _fit_poly(px: np.ndarray, nm: np.ndarray,
     return np.asarray(lin, dtype=float)
 
 
+# Diferencias de RMS por debajo de esto son ruido de punto flotante (el
+# ajuste pasa por los mismos puntos): desempatamos por prioridad —el par
+# clásico 435,8/546,1 va primero— para que el resultado NO dependa de la
+# versión de numpy.  Sin esto, una diferencia de 1e-13 nm en el RMS hacía
+# ganar a un par de líneas equivocado (43 nm de error en CI).
+RMS_TIE = 1e-6
+
+
+def _better_assignment(cand: tuple, best: tuple) -> bool:
+    """¿`cand` explica mejor la lámpara que `best`?  (ver RMS_TIE)."""
+    if cand[0] != best[0]:
+        return cand[0] < best[0]          # más picos explicados
+    if abs(cand[1] - best[1]) <= RMS_TIE:
+        return cand[2] < best[2]          # desempate: prioridad del par
+    return cand[1] < best[1]              # menor error
+
+
 def fit_hg_lines(pixel: np.ndarray, intensity: np.ndarray,
                  tol_nm: float = 3.0, min_lines: int = 3,
                  allow_pair: bool = False
@@ -338,7 +355,7 @@ def fit_hg_lines(pixel: np.ndarray, intensity: np.ndarray,
                 if len(used) < need:
                     continue
                 cand = (-len(used), rms, pri, coeffs, used)
-                if best is None or cand[:3] < best[:3]:
+                if best is None or _better_assignment(cand, best):
                     best = cand
     if best is None:
         return None
