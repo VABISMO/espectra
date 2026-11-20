@@ -41,8 +41,9 @@ spectral angle, absorption bands and **CIELAB color (ΔE)**.
 - 📐 **Optional gamma linearization** — `gamma=2.2` undoes the camera's
   8-bit gamma *before* dividing sample ÷ LED, so absorption bands are not
   compressed (`--gamma`, `POST /api/analyze {"gamma": ...}`)
-- 🎯 **Material identification** — `score = 0.35·cos(SAM) + 0.40·band
-  continuity + 0.25·color(ΔE)` over a 400–700 nm grid
+- 🎯 **Material identification** — `score = 0.20·cos(SAM) + 0.10·band
+  continuity + 0.70·color(ΔE)` over a 400–700 nm grid; the weights come
+  from `benchmark.py --sweep-weights`, not from taste
 - 🎨 **Color science included** — CIE 1931 observer + D65 illuminant bundled;
   sample and candidate swatches shown side by side
 - 🔍 **Searchable library** — autocomplete over 1,024 materials with a detail
@@ -128,9 +129,12 @@ USB camera ──► live MJPEG view ──► capture SAMPLE / LED / dark
    of point-sampled, so camera noise does not pass straight through. Pass
    `gamma` first if your camera applies 8-bit gamma, otherwise band depths
    are compressed.
-4. **Matching** — spectral angle (SAM), continuum-removed absorption bands
-   and CIELAB ΔE under D65, weighted `0.35 / 0.40 / 0.25` with a band-depth
-   penalty, on library spectra previously convolved to the instrument FWHM.
+4. **Matching** — the classic spectral angle (Kruse/Aldrich, **not**
+   mean-centred: centred it degenerates into Pearson's r), continuum-
+   removed absorption bands and CIELAB ΔE under D65, weighted
+   `0.20 / 0.10 / 0.70`, on library spectra previously convolved to the
+   instrument FWHM. The band-depth penalty is weight-independent, so
+   absorption bands still weigh even at `0.10`.
    The ranking ends in a **verdict**: below `min_score` ⇒ *unknown*,
    below `min_margin` between families ⇒ *uncertain*, otherwise
    *identified*.
@@ -230,30 +234,43 @@ tests/run_tests.py   end-to-end suite (plain Python, no pytest)
 `scripts/benchmark.py` simulates a **real measurement of each library
 spectrum**: white LED × reflectance through the instrument line shape,
 one common exposure for sample and lamp, 8-bit quantization, read + photon
-noise, optional gamma and optional calibration error — then runs the whole
-pipeline and checks whether that material comes back in the top-1 / top-3.
-It also throws in **negative controls** (flat, noise, ramp, LED without
-dividing) that must *not* be identified.
+noise, optional gamma, optional calibration error and optional stray light
+— then runs the whole pipeline and checks whether that material comes back
+in the top-1 / top-3. It also throws in **negative controls** (flat, noise,
+ramp, LED without dividing) that must *not* be identified.
 
 Defaults (`--n 200 --negatives 40`, 1 % noise, 7 nm FWHM, seed 7):
 
 | metric | value |
 |---|---|
-| top-1, exact name | **39.0 %** |
-| top-3, exact name | **60.0 %** |
-| top-1, same material family | **42.0 %** |
-| top-3, same material family | **62.5 %** |
-| verdicts | identified 14 % · uncertain 77 % · unknown 10 % |
-| correct when it answers `identified` | **100 % (27/27)** |
+| top-1, exact name | **68.5 %** |
+| top-3, exact name | **91.5 %** |
+| top-1, same material family | **70.5 %** |
+| top-3, same material family | **92.5 %** |
+| verdicts | identified 13 % · uncertain 82 % · unknown 6 % |
+| correct when it answers `identified` | **96.2 % (25/26)** |
 | false positives on 40 negative controls | **0 %** |
 
-The thresholds behind the verdict (`min_score=0.70`, `min_margin=0.06`)
-were picked with `--sweep`, which prints precision/recall/false-positive
-rate for every pair: lowering the margin to 0.02 multiplies the false
-positives by ~5.
+**Score weights** (`0.20 / 0.10 / 0.70`) come from `--sweep-weights`,
+which re-ranks every stored candidate over a grid of weight triples and
+prints top-1 / top-3 for each. It was run across four scenarios (two
+seeds, 2 % noise + 5 nm calibration error, and 6 DN of stray light): the
+previous `0.35 / 0.40 / 0.25` averaged **25.4 %** top-1 per family, the
+chosen triple **55.8 %**, and the raw optimum `0 / 0.10 / 0.90`
+(60.5 %) was rejected on purpose — it would reduce the score to a colour
+match. The continuum weight fell because it is the noisiest term (Pearson
+on already continuum-removed curves); absorption bands still weigh through
+the weight-independent `1 − 0.5·depth` penalty.
+
+**Verdict thresholds** (`min_score=0.70`, `min_margin=0.06`) come from
+`--sweep`, which prints precision / recall / false-positive rate for every
+pair. At a margin of 0.04 precision is already 100 % on benign data but
+falls to 75 % once a 5 nm calibration error is added; 0.05 holds 100 % in
+both, and dropping to 0.02 lets false positives back in (20 % under harsh
+conditions).
 
 Pushing the conditions down to 2 % noise **and** a 5 nm calibration error
-drops the same run to top-1 24.5 % / top-3 39.5 % — calibration accuracy
+drops the same run to top-1 56.0 % / top-3 83.5 % — calibration accuracy
 matters as much as the library.
 
 **What this is not.** It is a closed-loop synthetic benchmark: it measures
@@ -267,9 +284,10 @@ conditions.
 ## Limits (honest)
 
 - Visible range only (**400–700 nm**) — most minerals are smooth and
-  featureless there, which is exactly why the benchmark top-1 sits near
-  40 %: many materials are genuinely indistinguishable (calcite vs quartz).
-  Infrared needs different hardware.
+  featureless there, which is why even the benchmark tops out near
+  69 % top-1 (71 % per family): many materials are genuinely
+  indistinguishable (calcite vs quartz). Infrared needs different
+  hardware.
 - Pseudo-reflectance identifies **families** of materials, not quantitative
   compositions. The verdict gates the answer, but a `identified` label is a
   ranking statement, not a probability: the thresholds were tuned on

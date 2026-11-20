@@ -47,8 +47,8 @@ con ángulo espectral, bandas de absorción y **color CIELAB (ΔE)**.
   absorción no queden comprimidas (`--gamma`, `POST /api/analyze
   {"gamma": ...}`)
 - 🎯 **Identificación de materiales** —
-  `score = 0.35·cos(SAM) + 0.40·bandas + 0.25·color(ΔE)` sobre rejilla
-  400–700 nm
+  `score = 0.20·cos(SAM) + 0.10·bandas + 0.70·color(ΔE)` sobre rejilla
+  400–700 nm; los pesos salen de `benchmark.py --sweep-weights`, no del gusto
 - 🎨 **Ciencia del color incluida** — observador CIE 1931 + iluminante D65
   empaquetados; muestras de color de la muestra y del candidato lado a lado
 - 🔍 **Biblioteca con buscador** — autocompletado sobre 1.024 materiales con
@@ -135,9 +135,13 @@ cámara USB ──► vista en vivo MJPEG ──► captura MUESTRA / LED / oscu
    de cada bin de 5 nm de la rejilla en lugar de muestrear un solo punto,
    así el ruido de la cámara no pasa entero. Si la cámara aplica gamma de
    8 bits, pásala primero (`gamma`); si no, las bandas quedan comprimidas.
-4. **Comparación** — ángulo espectral (SAM), bandas sin continuo y color
-   CIELAB ΔE bajo D65, ponderados `0.35 / 0.40 / 0.25`, contra referencias
-   previamente convolucionadas al FWHM del instrumento. El ranking termina
+4. **Comparación** — ángulo espectral clásico (Kruse/Aldrich, **sin**
+   centrar la media: centrado se convierte en el r de Pearson), bandas sin
+   continuo y color CIELAB ΔE bajo D65, ponderados `0.20 / 0.10 / 0.70`,
+   contra referencias previamente convolucionadas al FWHM del instrumento.
+   La penalización de profundidad de banda NO depende de los pesos, así que
+   las bandas de absorción siguen pesando aunque el peso del continuo sea
+   `0.10`. El ranking termina
    en un **veredicto**: por debajo de `min_score` ⇒ *unknown*; por debajo
    de `min_margin` entre familias ⇒ *uncertain*; si no, *identified*.
 
@@ -236,31 +240,47 @@ tests/run_tests.py   suite end-to-end (Python puro, sin pytest)
 `scripts/benchmark.py` simula una **medición real de cada espectro de la
 biblioteca**: LED blanco × reflectancia a través de la función de línea del
 instrumento, una misma exposición para muestra y lámpara, cuantización de
-8 bits, ruido de lectura y fotónico, gamma opcional y error de calibración
-opcional; después recorre el pipeline entero y comprueba si el material
-vuelve en el top-1 / top-3. Y añade **controles negativos** (plano, ruido,
-rampa, LED sin dividir) que **no** deberían identificarse.
+8 bits, ruido de lectura y fotónico, gamma opcional, error de calibración
+opcional y luz parásita opcional; después recorre el pipeline entero y
+comprueba si el material vuelve en el top-1 / top-3. Y añade **controles
+negativos** (plano, ruido, rampa, LED sin dividir) que **no** deberían
+identificarse.
 
 Valores por defecto (`--n 200 --negatives 40`, ruido 1 %, FWHM 7 nm,
 semilla 7):
 
 | métrica | valor |
 |---|---|
-| top-1, nombre exacto | **39,0 %** |
-| top-3, nombre exacto | **60,0 %** |
-| top-1, misma familia | **42,0 %** |
-| top-3, misma familia | **62,5 %** |
-| veredictos | identified 14 % · uncertain 77 % · unknown 10 % |
-| acierto cuando responde `identified` | **100 % (27/27)** |
+| top-1, nombre exacto | **68,5 %** |
+| top-3, nombre exacto | **91,5 %** |
+| top-1, misma familia | **70,5 %** |
+| top-3, misma familia | **92,5 %** |
+| veredictos | identified 13 % · uncertain 82 % · unknown 6 % |
+| acierto cuando responde `identified` | **96,2 % (25/26)** |
 | falsos positivos en 40 controles negativos | **0 %** |
 
-Los umbrales del veredicto (`min_score=0.70`, `min_margin=0.06`) se
-eligieron con `--sweep`, que imprime precisión, recall y tasa de falsos
-positivos para cada par: bajar el margen a 0,02 multiplica los falsos
-positivos por ~5.
+**Pesos del score** (`0,20 / 0,10 / 0,70`) — salen de
+`--sweep-weights`, que reordena todos los candidatos almacenados sobre
+una rejilla de triples de pesos e imprime el top-1 / top-3 de cada uno.
+Se corrió en cuatro escenarios (dos semillas, ruido 2 % + error de
+calibración 5 nm, y 6 DN de luz parásita): los anteriores
+`0,35 / 0,40 / 0,25` promediaban **25,4 %** de top-1 por familia, el
+triple elegido **55,8 %**, y el óptimo crudo `0 / 0,10 / 0,90`
+(60,5 %) se descartó a propósito: reduciría el score a un simple
+emparechamiento por color. El peso del continuo bajó porque es el término
+más ruidoso (Pearson sobre curvas ya sin continuo); las bandas de
+absorción siguen pesando a través de la penalización `1 − 0,5·depth`,
+que no depende de los pesos.
+
+**Umbrales del veredicto** (`min_score=0.70`, `min_margin=0.06`) — salen
+de `--sweep`, que imprime precisión, recall y tasa de falsos positivos
+para cada par. Con margen 0,04 la precisión ya es del 100 % con datos
+benignos, pero baja al 75 % al añadir un error de calibración de 5 nm;
+con 0,05 se mantiene en el 100 % en ambos, y bajar a 0,02 devuelve falsos
+positivos (20 % en condiciones duras).
 
 Si se empeoran las condiciones a 2 % de ruido **y** 5 nm de error de
-calibración, la misma cae a top-1 24,5 % / top-3 39,5 % — la precisión de
+calibración, la misma cae a top-1 56,0 % / top-3 83,5 % — la precisión de
 la calibración pesa tanto como la biblioteca.
 
 **Lo que esto NO es.** Es un benchmark sintético de bucle cerrado: mide
@@ -274,9 +294,9 @@ como referencia para condiciones de laboratorio.
 ## Límites honestos
 
 - Solo el visible (**400–700 nm**): la mayoría de minerales son lisos o
-  suaves ahí, y por eso el top-1 del benchmark ronda el 40 % — muchos
-  materiales son genuinamente indistinguibles (calcita vs cuarzo). El
-  infrarrojo requiere otro hardware.
+  suaves ahí, y por eso el benchmark apenas llega al 69 % de top-1 (71 %
+  por familia) — muchos materiales son genuinamente indistinguibles
+  (calcita vs cuarzo). El infrarrojo requiere otro hardware.
 - La pseudo-reflectancia identifica **familias** de materiales, no
   composiciones cuantitativas. El veredicto filtra la respuesta, pero
   `identified` es una afirmación de ranking, no una probabilidad: los

@@ -2,13 +2,17 @@
 
 Métricas combinadas (todas invariantes a la escala de intensidad):
 
-* SAM   : ángulo espectral entre las curvas normalizadas (0 = idénticas).
-* r     : correlación de Pearson de las curvas normalizadas.
+* SAM   : ángulo espectral clásico entre las curvas sin centrar
+          (Kruse/Aldrich) — invariante a la escala, no al offset.
+* r     : correlación de Pearson de las curvas centradas (se reporta
+          aparte y se usa como filtro `min_r`).
 * CR    : eliminación de continuo (hull convexo superior) + correlación
           de las bandas de absorción, que es donde está la información
           química real y donde se ignora el color global.
 
-score = 1 - (w_sam·cos + w_cr·r_cr)/(... )   → 1.0 = coincidencia perfecta.
+score = w_sam·cos(SAM) + w_cr·(r_cr+1)/2 + w_color·(1-ΔE/60) →1.0 perfecto.
+Los tres términos son magnitudes DISTINTAS: con la media centrada, el
+primero coincidía exactamente con el segundo (medido: cos(SAM) ≡ r).
 
 Los puntos donde la muestra es NaN (zonas sin lámpara, fuera de la
 calibración) se descartan ANTES de comparar: se evalúa solo el subconjunto
@@ -69,17 +73,18 @@ def continuum_removal(nm: np.ndarray, y: np.ndarray) -> np.ndarray:
     return np.nan_to_num(cr, nan=float(np.nanmean(cr)))
 
 
-def _unit(y: np.ndarray) -> np.ndarray:
-    y = np.asarray(y, dtype=float)
-    y = y - y.mean()
-    n = np.linalg.norm(y)
-    return y / n if n > 0 else y
-
-
 def spectral_angle(a: np.ndarray, b: np.ndarray) -> float:
-    """Ángulo en radianes entre dos curvas (0 = idénticas)."""
-    a, b = _unit(a), _unit(b)
-    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    """Ángulo espectral clásico (Kruse/Aldrich) en radianes: el ángulo
+    entre las dos curvas **sin centrar**, por eso es invariante a la
+    escala pero conserva el offset (el albedo es información).
+
+    0 = misma forma y proporción.  Si se centrara la media esto se
+    convertiría en el coeficiente de Pearson y el score repetiría dos
+    veces la misma magnitud (medido: cos(SAM) ≡ r en la versión anterior).
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
     if denom == 0:
         return float("nan")
     cos = float(np.clip(np.dot(a, b) / denom, -1.0, 1.0))
@@ -124,6 +129,20 @@ def band_depths(cr: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------- veredicto
+# Pesos del score: elegidos con `scripts/benchmark.py --sweep-weights` sobre
+# 4 escenarios (2 semillas, ruido 2 % + calibración 5 nm, luz parásita 6 DN):
+#   0.35 / 0.40 / 0.25 -> 25.4 % top-1 por familia (media)   [antes]
+#   0.20 / 0.10 / 0.70 -> 55.8 %   <- elegido  (87 % de la ganancia)
+#   0.00 / 0.10 / 0.90 -> 60.5 %   (el óptimo puro deja el score en un
+#                                    colorímetro: se descarta)
+# El continuo bajó porque es el término más ruidoso (Pearson sobre curvas
+# ya sin continuo amplifica el ruido); las bandas de absorción siguen
+# pesando por la penalización multiplicativa `1 - 0.5·depth_diff`, que NO
+# depende de los pesos.
+W_SAM = 0.20
+W_CONT = 0.10
+W_COLOR = 0.70
+
 # Umbrales por defecto: fijados con `scripts/benchmark.py --sweep`, no a
 # ojo.  Con 200-300 muestras sintéticas ruidosas y 40-60 controles negativos:
 #   (0.70, 0.06) → 0 % de falsos positivos, precisión por familia 86-100 %
@@ -220,9 +239,9 @@ def match(
     library: list[tuple[Spectrum, np.ndarray]],
     grid: np.ndarray,
     top: int = 5,
-    w_sam: float = 0.35,
-    w_cont: float = 0.40,
-    w_color: float = 0.25,
+    w_sam: float = W_SAM,
+    w_cont: float = W_CONT,
+    w_color: float = W_COLOR,
     min_r: float = -1.0,
     min_score: float = VERDICT_MIN_SCORE,
     min_margin: float = VERDICT_MIN_MARGIN,

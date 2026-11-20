@@ -502,9 +502,10 @@ def _show_results(results, grid, y_grid, s_hex) -> None:
         import pandas as pd
         df = pd.DataFrame([r.as_row() for r in results])
         st.dataframe(df, use_container_width=True, hide_index=True)
-        st.caption("score = 0.35·ángulo espectral + 0.40·bandas + "
-                   "0.25·color (ΔE), con penalización por bandas mal "
-                   "ajustadas. ΔE: <5 casi idéntico, >20 muy distinto.")
+        st.caption("score = 0.20·ángulo espectral + 0.10·bandas + "
+                   "0.70·color (ΔE), con penalización por bandas mal "
+                   "ajustadas (esa penalización no depende de los pesos). "
+                   "ΔE: <5 casi idéntico, >20 muy distinto.")
 
     with tabs[3]:
         import pandas as pd
