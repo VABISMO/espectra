@@ -55,7 +55,7 @@ con ángulo espectral, bandas de absorción y **color CIELAB (ΔE)**.
   ficha: gráfica del espectro, mín/máx/media, rango y color
 - 🌍 **Inglés (default) y español** — selector discreto, persistido
 - 🖥️ **Interfaz React** (tema oscuro, centrado) servida por backend FastAPI
-- 🧪 **70 tests end-to-end** + un **benchmark leave-one-out** con tasas
+- 🧪 **71 tests end-to-end** + un **benchmark leave-one-out** con tasas
   top-1 / top-3 reales + CI en GitHub Actions
 
 <p align="center">
@@ -99,7 +99,7 @@ Verifica todo el pipeline:
 
 ```bash
 .venv/bin/python -m espectro demo     # análisis sintético → PASS
-.venv/bin/python tests/run_tests.py   # 70 comprobaciones: motor + API + cámara
+.venv/bin/python tests/run_tests.py   # 71 comprobaciones: motor + API + cámara
 .venv/bin/python scripts/benchmark.py # leave-one-out: tasas top-1 / top-3
 ```
 
@@ -295,7 +295,7 @@ como referencia para condiciones de laboratorio.
   `coverage < 1.0` en la respuesta significa que se excluyó parte de la
   banda de las métricas.
 - **Los tests validan el pipeline y el benchmark lo valida con datos
-  sintéticos.** Las 70 comprobaciones y la demo prueban que el código
+  sintéticos.** Las 71 comprobaciones y la demo prueban que el código
   corre de extremo a extremo con datos generados por el mismo modelo
   (autoconsistencia < 5 nm); el benchmark leave-one-out da la exactitud
   en conjunto cerrado sobre medidas simuladas. Ninguno es una medición
