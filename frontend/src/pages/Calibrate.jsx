@@ -1,4 +1,4 @@
-/* Página Calibración: captura del LED → píxel → nm */
+/* Calibration page: LED capture → pixel → nm */
 import { useState } from 'react'
 import { api } from '../api.js'
 import CameraPanel from '../components/CameraPanel.jsx'
@@ -139,6 +139,8 @@ ${t('cal.log.formula')}` +
                   v: out.meta.lines.map((l) => `${l.nm} nm@p${l.pixel.toFixed(0)}`)
                     .join(' · '),
                 })}` : '') +
+              (out.meta.fwhm_nm != null
+                ? `\n${t('cal.log.fwhm', { v: out.meta.fwhm_nm })}` : '') +
               (out.meta.led_peaks_pixel
                 ? `\n${t('cal.log.peaks', {
                   a: out.meta.led_peaks_pixel[0],
@@ -150,7 +152,7 @@ ${t('cal.log.formula')}` +
               (out.meta.blackbody_T != null
                 ? `\n${t('cal.log.T', { v: Math.round(out.meta.blackbody_T) })}` : '')}
           </div>
-          {/* gráfico de calibración grande, a todo el ancho */}
+          {/* large calibration chart, full width */}
           {out.preview_b64 && (
             <div style={{ marginTop: 16 }}>
               <label className="field">{t('cal.preview')}</label>
@@ -177,6 +179,11 @@ ${t('cal.log.formula')}` +
           {cal.led_corr != null && (
             <span style={{ marginLeft: 10, color: '#7c8aa8', fontSize: 13 }}>
               r = {Number(cal.led_corr).toFixed(4)}
+            </span>
+          )}
+          {cal.fwhm_nm != null && (
+            <span style={{ marginLeft: 10, color: '#7c8aa8', fontSize: 13 }}>
+              FWHM {cal.fwhm_nm} nm
             </span>
           )}
         </div>

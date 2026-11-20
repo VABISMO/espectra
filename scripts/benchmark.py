@@ -1,29 +1,30 @@
 #!/usr/bin/env python
-"""Benchmark de identificación: validación sintética leave-one-out.
+"""Identification benchmark: synthetic leave-one-out validation.
 
-Lo que mide
------------
-Para cada espectro de la biblioteca se **simula una medición real** de ese
-mismo material (LED blanco × reflectancia, ruido, cuantización de 8 bits,
-gamma opcional y error de calibración opcional) y se comprueba si el
-material aparece en el top-1 / top-3 del cruce contra la biblioteca.
+What it measures
+---------------
+For every spectrum in the library it **simulates a real measurement** of
+that same material (white LED × reflectance, noise, 8-bit quantization,
+optional gamma and optional calibration error) and checks whether that
+material comes back in the top-1 / top-3 of the crossing against the
+library.
 
-Es un benchmark **cerrado y sintético**: valida el pipeline (máscara de
-lámpara, linealización, resolución, scoring) y cuánto se separan los
-minerales entre sí en 400-700 nm.  NO es una validación con muestras
-reales ni mide la exactitud en el mundo tangible: para eso haría falta
-una carta de color / pinturas conocidas con el instrumento en la mano.
+It is a **closed, synthetic** benchmark: it validates the pipeline (lamp
+mask, linearization, resolution, scoring) and how far apart minerals
+actually are in 400-700 nm. It is NOT a validation with real samples nor
+does it measure real-world accuracy: that would need a colour chart /
+known paints with the instrument in hand.
 
-Además incluye **controles negativos** (plano, ruido, rampa, LED sin
-dividir) para el que no debería identificarse nada: mide la tasa de
-falsos positivos de la clase "desconocido".
+It also includes **negative controls** (flat, noise, ramp, LED without
+dividing) where nothing should be identified: it measures the false
+positive rate of the "unknown" class.
 
-Uso
+Usage
 ---
-    python scripts/benchmark.py                    # 200 muestras
+    python scripts/benchmark.py                    # 200 samples
     python scripts/benchmark.py --n 500 --noise 0.02
     python scripts/benchmark.py --gamma 2.2 --cal-err 5 --json out.json
-    python scripts/benchmark.py --fwhm 0            # sin degradar referencias
+    python scripts/benchmark.py --fwhm 0            # do not degrade refs
 """
 from __future__ import annotations
 
@@ -55,12 +56,12 @@ PEAK = 220.0
 def measure(sig: np.ndarray, rng: np.random.Generator, noise: float,
             gamma: float, gain: float, full_scale: float = 255.0
             ) -> np.ndarray:
-    """Señal óptica · `gain` → DN de 8 bits con ruido y (opcional) gamma.
+    """Optical signal · `gain` → 8-bit DN with noise and (optional) gamma.
 
-    `gain` es COMÚN para muestra y bombilla (misma exposición, como exige
-    el README): así un material oscuro tiene realmente peor SNR en vez de
-    recibir la misma que uno brillante.  El ruido combina lectura
-    (`noise`·220 DN) y fotónico (∝ √DN).
+    `gain` is COMMON to sample and bulb (same exposure, as the README
+    requires): that way a dark material really has worse SNR instead of
+    getting the same one as a bright one.  Noise combines readout
+    (`noise`·220 DN) and photon (∝ √DN).
     """
     sig = np.asarray(sig, dtype=float)
     dn = np.clip(sig * gain, 0.0, full_scale)
@@ -77,11 +78,12 @@ def measure(sig: np.ndarray, rng: np.random.Generator, noise: float,
 def capture(s_sig: np.ndarray, l_sig: np.ndarray,
             rng: np.random.Generator, noise: float, gamma: float,
             stray: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
-    """Expone para la bombilla (nunca satura) y captura muestra + bombilla.
+    """Expose for the bulb (never saturates) and capture sample + bulb.
 
-    `stray` es luz parásita / corriente oscura residual en DN: se AÑADE a
-    ambas capturas, así que NO se cancela en la división y comprime el
-    espectro hacia el blanco — exactamente como en el instrumento real.
+    `stray` is stray light / residual dark current in DN: it is ADDED to
+    both captures, so it does NOT cancel out in the division and
+    compresses the spectrum towards white — exactly like in a real
+    instrument.
     """
     gain = PEAK / max(float(np.max(l_sig)), 1e-9)
     off = float(stray)
@@ -91,7 +93,7 @@ def capture(s_sig: np.ndarray, l_sig: np.ndarray,
 
 def cal_distortion(p: np.ndarray, cal_err: float,
                    rng: np.random.Generator) -> np.ndarray:
-    """Error suave de calibración con máximo absoluto `cal_err` nm."""
+    """Smooth calibration error with absolute maximum `cal_err` nm."""
     if cal_err <= 0:
         return np.zeros_like(p)
     u = (p - p.mean()) / max(p.max() - p.min(), 1.0)
@@ -105,12 +107,12 @@ def cal_distortion(p: np.ndarray, cal_err: float,
 def simulate(spec: lib.Spectrum, rng: np.random.Generator, noise: float,
              gamma: float, cal_err: float, fwhm: float | None,
              stray: float = 0.0) -> np.ndarray:
-    """Muestra sintética de `spec` medida con el LED, ya en la rejilla.
+    """Synthetic measurement of `spec` taken with the LED, already on the grid.
 
-    La muestra pasa por la función de línea del instrumento (gaussiana de
-    FWHM `fwhm`), igual que las referencias: es lo que ve el sensor de
-    verdad.  Sin esto, la muestra sale "más nítida" que la biblioteca y
-    el cruce queda penalizado de forma injusta.
+    The sample goes through the instrument line shape (Gaussian of FWHM
+    `fwhm`), just like the references: that is what the sensor really
+    sees.  Without it the sample comes out "sharper" than the library and
+    the crossing is unfairly penalised.
     """
     p = np.arange(W, dtype=float)
     nm_true = 400.0 + p / (W - 1) * 300.0
@@ -119,7 +121,7 @@ def simulate(spec: lib.Spectrum, rng: np.random.Generator, noise: float,
                   right=float(spec.reflectance[-1]))
     lamp = led_model(nm_true)
     lamp = lamp / lamp.max() if lamp.max() > 0 else lamp
-    # el detector integra R·L a través de la ILS
+    # the detector integrates R·L through the ILS
     s_sig = degrade_resolution(nm_true, lamp * R, fwhm)
     l_sig = degrade_resolution(nm_true, lamp, fwhm)
     s_dn, l_dn = capture(s_sig, l_sig, rng, noise, gamma, stray)
@@ -131,8 +133,8 @@ def simulate(spec: lib.Spectrum, rng: np.random.Generator, noise: float,
 
 NEGATIVES = ("flat", "noise", "ramp", "led")
 
-# Rejilla de pesos del score: w_color = 1 - w_sam - w_cont (siempre ≥0.10).
-# Incluye el par por defecto (0.20 / 0.10 / 0.70) como referencia.
+# Score weight grid: w_color = 1 - w_sam - w_cont (always ≥0.10).
+# Includes the default triple (0.20 / 0.10 / 0.70) as a reference.
 WEIGHT_COMBOS = [(ws, wc, round(1.0 - ws - wc, 2))
                  for ws in (0.00, 0.10, 0.20, 0.30, 0.35, 0.40, 0.50, 0.60)
                  for wc in (0.10, 0.20, 0.30, 0.40, 0.50, 0.60)
@@ -141,11 +143,11 @@ WEIGHT_COMBOS = [(ws, wc, round(1.0 - ws - wc, 2))
 
 def score_of(comp: tuple, w_sam: float, w_cont: float,
              w_color: float) -> float:
-    """Recompone el score de un candidato a partir de sus componentes.
+    """Rebuild a candidate's score from its components.
 
-    comp = (cos_SAM, r_continuo, color_term, penalización_de_banda, nombre)
-    — exactamente la fórmula de `match.match()`, así que el barrido de
-    pesos no vuelve a recorrer la biblioteca.
+    comp = (cos_SAM, r_continuum, color_term, band_penalty, name)
+    — exactly the formula of `match.match()`, so the weight sweep does not
+    walk the library again.
     """
     cos, r_cr, color, pen, _ = comp
     v = (w_sam * cos
@@ -157,7 +159,7 @@ def score_of(comp: tuple, w_sam: float, w_cont: float,
 def negative(kind: str, rng: np.random.Generator, noise: float,
              gamma: float, fwhm: float | None, stray: float = 0.0
              ) -> np.ndarray:
-    """Control negativo: una curva que NO es un material de la biblioteca."""
+    """Negative control: a curve that is NOT a material of the library."""
     p = np.arange(W, dtype=float)
     nm_true = 400.0 + p / (W - 1) * 300.0
     if kind == "flat":
@@ -182,7 +184,7 @@ def negative(kind: str, rng: np.random.Generator, noise: float,
 
 
 def components(r) -> tuple:
-    """Componentes independientes de los pesos de un MatchResult."""
+    """Weight-independent components of a MatchResult."""
     cos = float(np.cos(np.radians(r.sam_deg))) if np.isfinite(r.sam_deg) else 0.0
     r_cr = float(r.r_continuum) if np.isfinite(r.r_continuum) else 0.0
     color = (float(np.clip(1.0 - r.delta_e / 60.0, 0.0, 1.0))
@@ -194,36 +196,40 @@ def components(r) -> tuple:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="benchmark",
-        description="Validación sintética LOO del pipeline de identificación")
+        description="Synthetic LOO validation of the identification pipeline")
     ap.add_argument("--n", type=int, default=200,
-                    help="muestras a evaluar (por defecto 200)")
+                    help="samples to evaluate (default 200)")
     ap.add_argument("--negatives", type=int, default=40,
-                    help="controles negativos (0 para desactivar)")
+                    help="negative controls (0 to disable)")
+    ap.add_argument("--open-set", type=int, default=0,
+                    help="K families removed from the library: checks that, "
+                         "with the true material absent, the verdict does "
+                         "NOT claim to identify it (0 = off)")
     ap.add_argument("--noise", type=float, default=0.01,
-                    help="ruido gaussiano como fracción del pico (0.01 = 1%%)")
+                    help="gaussian noise as a fraction of the peak (0.01 = 1%%)")
     ap.add_argument("--gamma", type=float, default=1.0,
-                    help="gamma de la cámara simulada (2.2 = típica UVC)")
+                    help="simulated camera gamma (2.2 = typical UVC)")
     ap.add_argument("--cal-err", type=float, default=0.0,
-                    help="error máximo de calibración en nm (0 = exacto)")
+                    help="maximum calibration error in nm (0 = exact)")
     ap.add_argument("--stray", type=float, default=0.0,
-                    help="luz parásita residual en DN (no se cancela en la "
-                         "división; p.ej. 5 = ~2%% del pico)")
+                    help="residual stray light in DN (does not cancel in the "
+                         "division; e.g. 5 = ~2%% of the peak)")
     ap.add_argument("--fwhm", type=float, default=lib.FWHM_DEFAULT,
-                    help="resolución del instrumento en nm (0 = sin degradar)")
+                    help="instrument resolution in nm (0 = do not degrade)")
     ap.add_argument("--top", type=int, default=3)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--sweep", action="store_true",
-                    help="imprimir un barrido de los umbrales del veredicto")
+                    help="print a sweep of the verdict thresholds")
     ap.add_argument("--sweep-weights", action="store_true",
-                    help="imprimir un barrido de los pesos del score "
-                         "(w_sam / w_continuo / w_color)")
+                    help="print a sweep of the score weights "
+                         "(w_sam / w_continuum / w_color)")
     ap.add_argument("--library", default=str(ROOT / "data" / "libraries"))
-    ap.add_argument("--json", default=None, help="volcar resultado en JSON")
+    ap.add_argument("--json", default=None, help="dump the result as JSON")
     args = ap.parse_args(argv)
 
     spectra = lib.load_library(args.library)
     if not spectra:
-        print(f"ERROR: biblioteca vacía en {args.library} "
+        print(f"ERROR: empty library at {args.library} "
               "→ python scripts/fetch_usgs.py", file=sys.stderr)
         return 2
     fwhm = None if args.fwhm <= 0 else args.fwhm
@@ -233,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
 
     n = min(max(1, args.n), len(pool))
     picks = rng.choice(len(pool), size=n, replace=False)
-    # con barrido de pesos necesitamos TODOS los candidatos, no solo el top
+    # the weight sweep needs EVERY candidate, not just the top
     top_k = 10 ** 6 if args.sweep_weights else max(args.top, 10)
 
     exact1 = exact3 = fam1 = fam3 = 0
@@ -271,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         if not exact:
             misses.append(f"{spec.name} → {names[0]}")
 
-    # --- controles negativos: no deberían identificarse
+    # --- negative controls: nothing should be identified
     neg_total = neg_identified = neg_uncertain = 0
     kinds = Counter()
     for k in range(max(0, args.negatives)):
@@ -284,9 +290,32 @@ def main(argv: list[str] | None = None) -> int:
                               "kind": kind})
         if out.verdict.label == "identified":
             neg_identified += 1
-            kinds[f"{kind}→falso positivo"] += 1
+            kinds[f"{kind}→false positive"] += 1
         elif out.verdict.label == "uncertain":
             neg_uncertain += 1
+
+    # --- open-set: the true family is NOT in the library
+    os_total = os_ident = os_unc = os_unk = 0
+    if args.open_set > 0:
+        by_fam: dict[str, list] = {}
+        for p in paired:
+            by_fam.setdefault(mtc.family_key(p.spectrum.name), []).append(p)
+        fams = sorted(by_fam)
+        pick = rng.choice(len(fams),
+                          size=min(args.open_set, len(fams)), replace=False)
+        for k in pick:
+            fam = fams[int(k)]
+            rest = [p for p in paired
+                    if mtc.family_key(p.spectrum.name) != fam]
+            target = by_fam[fam][0]
+            y = simulate(target.spectrum, rng, args.noise, args.gamma,
+                         args.cal_err, fwhm, args.stray)
+            out = mtc.match(GRID, y, rest, GRID, top=5)
+            lab = out.verdict.label
+            os_total += 1
+            os_ident += lab == "identified"
+            os_unc += lab == "uncertain"
+            os_unk += lab == "unknown"
 
     pct = lambda a, b: 100.0 * a / b if b else 0.0
     res = {
@@ -303,40 +332,49 @@ def main(argv: list[str] | None = None) -> int:
                       "uncertain": neg_uncertain,
                       "rate_identified": round(pct(neg_identified,
                                                    neg_total), 2)},
+        "open_set": {"n": os_total, "identified": os_ident,
+                     "uncertain": os_unc, "unknown": os_unk,
+                     "rate_identified": round(pct(os_ident, os_total), 2)},
         "config": {"noise": args.noise, "gamma": args.gamma,
                    "cal_err_nm": args.cal_err, "stray_dn": args.stray,
                    "fwhm": fwhm, "seed": args.seed, "library": args.library},
     }
 
-    print(f"Benchmark LOO sintético · {n} muestras · biblioteca "
-          f"{len(paired)} candidatos")
-    print(f"  config: ruido={args.noise:.3f} gamma={args.gamma:g} "
-          f"error_cal={args.cal_err:g} nm luz_parásita={args.stray:g} DN "
-          f"fwhm={fwhm} semilla={args.seed}")
-    print(f"  top-1 exacto      : {res['top1_exact']:5.1f} %")
-    print(f"  top-3 exacto      : {res['top3_exact']:5.1f} %")
-    print(f"  top-1 misma familia: {res['top1_family']:5.1f} %")
-    print(f"  top-3 misma familia: {res['top3_family']:5.1f} %")
-    print("  veredictos        : "
+    print(f"Synthetic LOO benchmark · {n} samples · library "
+          f"{len(paired)} candidates")
+    print(f"  config: noise={args.noise:.3f} gamma={args.gamma:g} "
+          f"cal_err={args.cal_err:g} nm stray={args.stray:g} DN "
+          f"fwhm={fwhm} seed={args.seed}")
+    print(f"  top-1 exact name  : {res['top1_exact']:5.1f} %")
+    print(f"  top-3 exact name  : {res['top3_exact']:5.1f} %")
+    print(f"  top-1 family      : {res['top1_family']:5.1f} %")
+    print(f"  top-3 family      : {res['top3_family']:5.1f} %")
+    print("  verdicts          : "
           + " · ".join(f"{k} {v} ({pct(v, n):.0f}%)"
                        for k, v in verdicts.most_common()))
-    print(f"  acierto cuando dice 'identified': "
+    print(f"  correct when it says 'identified': "
           f"{res['precision_when_identified']:.1f} % "
           f"({right_when_identified}/{identified})")
     if neg_total:
-        print(f"  controles negativos: {neg_total} · falsos positivos "
+        print(f"  negative controls: {neg_total} · false positives "
               f"(identified) = {neg_identified} "
               f"({res['negatives']['rate_identified']:.1f}%) · "
               f"uncertain = {neg_uncertain}")
         for k, v in kinds.most_common():
             print(f"    · {k}: {v}")
+    if os_total:
+        print(f"  open-set ({os_total} families removed from the library): "
+              f"confidently identified something = {os_ident} "
+              f"({pct(os_ident, os_total):.1f} %) · uncertain = {os_unc} · "
+              f"unknown = {os_unk} "
+              f"({pct(os_unk + os_unc, os_total):.1f} % abstained)")
 
     sweep = []
     if args.sweep and records:
-        print("\n  barrido de umbrales del veredicto "
+        print("\n  verdict threshold sweep "
               "(min_score × min_margin)")
-        print("   score  margen | ident%  acierto familia  acierto exacto  "
-              "FP negativos")
+        print("   score  margin | ident%  family acc  exact acc  "
+              "FP negatives")
         for ms in (0.55, 0.65, 0.70, 0.75, 0.80, 0.85):
             for mm in (0.02, 0.04, 0.05, 0.06, 0.08, 0.10):
                 sel = [r for r in records
@@ -369,12 +407,12 @@ def main(argv: list[str] | None = None) -> int:
                 f3 += any(fam(x) == fam(target) for x in names[:3])
             rows.append((pct(f1, n), pct(e1, n), pct(f3, n), ws, wc, wcol))
         rows.sort(reverse=True)
-        print("\n  barrido de PESOS del score (w_sam · w_continuo · w_color)")
-        print("  w_sam w_cont  w_col | top-1 exacto  top-1 familia  "
-              "top-3 familia")
+        print("\n  SCORE WEIGHT sweep (w_sam · w_continuum · w_color)")
+        print("  w_sam w_cont  w_col | top-1 exact  top-1 family  "
+              "top-3 family")
         for f1, e1, f3, ws, wc, wcol in rows:
-            mark = "  <- por defecto" if (ws, wc, wcol) == (0.20, 0.10, 0.70) \
-                else ("  <- antes" if (ws, wc, wcol) == (0.35, 0.40, 0.25)
+            mark = "  <- default" if (ws, wc, wcol) == (0.20, 0.10, 0.70) \
+                else ("  <- before" if (ws, wc, wcol) == (0.35, 0.40, 0.25)
                       else "")
             print(f"  {ws:.2f}  {wc:.2f}  {wcol:.2f} | {e1:11.1f}  "
                   f"{f1:13.1f}  {f3:13.1f}{mark}")
@@ -384,15 +422,15 @@ def main(argv: list[str] | None = None) -> int:
              "top3_family": round(f3, 1)}
             for f1, e1, f3, ws, wc, wcol in rows]
         b = rows[0]
-        print(f"  mejor: w = {b[3]:.2f} / {b[4]:.2f} / {b[5]:.2f}  "
-              f"(top-1 familia {b[0]:.1f} %, exacto {b[1]:.1f} %)")
+        print(f"  best: w = {b[3]:.2f} / {b[4]:.2f} / {b[5]:.2f}  "
+              f"(top-1 family {b[0]:.1f} %, exact {b[1]:.1f} %)")
 
     if misses:
-        print(f"  fallos top-1 ({len(misses)}):")
+        print(f"  top-1 misses ({len(misses)}):")
         for line in misses[:10]:
             print(f"    · {line}")
         if len(misses) > 10:
-            print(f"    … y {len(misses) - 10} más")
+            print(f"    … and {len(misses) - 10} more")
 
     if args.json:
         out_path = Path(args.json)

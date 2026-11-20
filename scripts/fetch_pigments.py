@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Descarga la biblioteca de pigmentos de Carrino et al. 2025 (Zenodo).
+"""Download the Carrino et al. 2025 pigment library (Zenodo).
 
-24 pigmentos sintéticos y minerales medidos con ASD FieldSpec-4 Hi-Res NG
-(350-2500 nm, 2151 canales).  Datos reales de reflexión, ideales para
-muestras iluminadas con lámpara.
+24 synthetic and mineral pigments measured with an ASD FieldSpec-4
+Hi-Res NG (350-2500 nm, 2151 channels).  Real reflectance data, ideal
+for lamp-illuminated samples.
 
 DOI: 10.5281/zenodo.14906872
 
-Salida: data/libraries/pigments/*.csv  (wavelength_nm,reflectance)
+Output: data/libraries/pigments/*.csv  (wavelength_nm,reflectance)
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def convert(text: str, stem: str) -> str:
             continue
         rows.append((nm, y))
     if len(rows) < 100:
-        raise ValueError(f"{stem}: solo {len(rows)} filas")
+        raise ValueError(f"{stem}: only {len(rows)} rows")
     out = [f"# name: {stem}", "# category: pigmento",
            "# source: Carrino et al. 2025, Zenodo 10.5281/zenodo.14906872",
            "wavelength_nm,reflectance"]

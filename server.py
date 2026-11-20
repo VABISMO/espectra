@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""API del espectrómetro (FastAPI) + servidor del frontend React.
+"""Spectrometer API (FastAPI) + React frontend server.
 
     .venv/bin/python server.py            # http://localhost:8000
-    .venv/bin/uvicorn server:app --reload # desarrollo
+    .venv/bin/uvicorn server:app --reload # development
 
-Reutiliza el motor de `espectro/` (extracción, calibración LED, bibliotecas,
-comparación con color CIELAB) y lo expone como JSON para la interfaz.
+Reuses the `espectro/` engine (extraction, LED calibration, libraries,
+CIELAB colour matching) and exposes it as JSON for the UI.
 """
 from __future__ import annotations
 
@@ -29,11 +29,10 @@ from espectro import camara as cam
 from espectro import image as im
 from espectro import library as lib
 from espectro import match as mtc
+from espectro import pipeline
 from espectro import plotting as pl
-from espectro.calib import apply_cal, load_cal, save_cal
+from espectro.calib import load_cal, save_cal
 from espectro.color import lab_of_spectrum, lab_to_hex
-from espectro.reflectance import (fill_nan, linearize, pseudo_reflectance,
-                                  resample)
 
 ROOT = Path(__file__).resolve().parent
 CAL_PATH = ROOT / "data" / "calibration" / "cal.json"
@@ -44,10 +43,10 @@ SLOTS = ("sample", "lamp", "cal", "dark")
 
 
 def _m(lang: str, es: str, en: str) -> str:
-    """Mensaje bilingüe según el parámetro `lang` de la petición."""
+    """Bilingual message from the request's `lang` parameter."""
     return es if lang == "es" else en
 
-app = FastAPI(title="Espectrómetro API", version="2.0")
+app = FastAPI(title="Spectrometer API", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -58,7 +57,7 @@ FETCH_STATUS: dict = {"running": False, "log": "", "done": False}
 
 
 class _Cam:
-    """Cámara USB compartida (un solo handle V4L2)."""
+    """Shared USB camera (a single V4L2 handle)."""
 
     def __init__(self) -> None:
         self.cap = None
@@ -124,10 +123,10 @@ def _img_from_slot(slot: str, lang: str = "en") -> np.ndarray:
     return np.asarray(Image.open(io.BytesIO(data)))
 
 
-# --------------------------------------------------------------- biblioteca
+# --------------------------------------------------------------- library
 def get_libs(fwhm: float | None = lib.FWHM_DEFAULT):
-    """(spectra, paired) cacheados; se invalida al añadir archivos o al
-    cambiar la resolución pedida (`fwhm`)."""
+    """(spectra, paired) cached; invalidated when files are added or the
+    requested resolution (`fwhm`) changes."""
     marker = sum(1 for _ in LIB_DIR.rglob("*.csv")) * 1_000_000 + \
         sum(p.stat().st_mtime for p in LIB_DIR.rglob("*") if p.is_file())
     key = (marker, None if fwhm is None else round(float(fwhm), 3))
@@ -148,6 +147,7 @@ def status(refresh_cameras: bool = False) -> dict:
                     "coeffs": [float(round(c, 6)) for c in coeffs],
                     "led_corr": meta.get("led_corr"),
                     "led_peaks": meta.get("led_peaks_pixel"),
+                    "fwhm_nm": meta.get("fwhm_nm"),
                     "file": str(CAL_PATH.relative_to(ROOT))}
     try:
         cameras = cam.probe_cameras(refresh=refresh_cameras)
@@ -156,7 +156,7 @@ def status(refresh_cameras: bool = False) -> dict:
     try:
         spectra, _ = get_libs()
         from collections import Counter
-        cats = Counter(s.category or "sin categoría" for s in spectra)
+        cats = Counter(s.category or "uncategorized" for s in spectra)
         srcs = Counter(s.source or "?" for s in spectra)
         lib_info = {"total": len(spectra), "categories": dict(cats.most_common()),
                     "sources": dict(srcs.most_common())}
@@ -173,7 +173,7 @@ def status(refresh_cameras: bool = False) -> dict:
 
 @app.get("/api/stream")
 def stream() -> StreamingResponse:
-    """Vista previa en vivo (MJPEG)."""
+    """Live preview (MJPEG)."""
 
     def gen():
         try:
@@ -247,7 +247,7 @@ def capture(slot: str, lang: str = "en") -> dict:
     else:
         opened = False
     rgb = None
-    for _ in range(6):               # descarta frames de la auto-exposición
+    for _ in range(6):               # discard auto-exposure frames
         rgb = CAM.read()
         if rgb is not None:
             break
@@ -275,7 +275,7 @@ def frame(slot: str, lang: str = "en") -> Response:
 @app.post("/api/frame/{slot}")
 async def frame_upload(slot: str, file: UploadFile = File(...),
                        lang: str = "en") -> dict:
-    """Sube una foto existente a una ranura (alternativa a la cámara)."""
+    """Upload an existing photo into a slot (camera alternative)."""
     if slot not in SLOTS:
         raise HTTPException(404, _m(lang, "ranura desconocida", "unknown slot"))
     raw = await file.read()
@@ -303,11 +303,8 @@ def analyze(payload: dict) -> dict:
     slot = payload.get("slot", "sample")
     channel = payload.get("channel", "sum")
     gamma = float(payload.get("gamma", 1.0))
-    # resolución del instrumento a la que se degradan las referencias
-    fwhm_in = payload.get("fwhm", lib.FWHM_DEFAULT)
-    fwhm = None if fwhm_in in (None, 0, "off") else float(fwhm_in)
     img = im.array_gray(_img_from_slot(slot, lang), channel)
-    # brillo relativo (para avisar de fotos oscuras en la interfaz)
+    # relative brightness (to warn about dark photos in the UI)
     maxv = 765.0 if channel == "sum" else 255.0
     brightness = float(np.clip(img.mean() / maxv, 0.0, 1.0))
     dark = (im.array_gray(_img_from_slot("dark", lang), channel)
@@ -319,52 +316,50 @@ def analyze(payload: dict) -> dict:
         dark=dark, smooth=int(payload.get("smooth", 5)),
         frac=float(payload.get("frac", 0.25)))
 
-    # --- bombilla de referencia (si existe)
+    # --- reference bulb (if present)
     lamp_png = STATE["slots"].get("lamp")
+    lamp_intensity = None
     if lamp_png:
         lamp_img = im.array_gray(_img_from_slot("lamp"), channel)
         ext_l = im.extract_profile(lamp_img, axis=ext.axis, smooth=5,
                                    frac=float(payload.get("frac", 0.25)))
-        n = min(ext.intensity.size, ext_l.intensity.size)
-        y = pseudo_reflectance(ext.intensity[:n], ext_l.intensity[:n],
-                               smooth=5, gamma=gamma, full_scale=maxv)
-        px = ext.pixel[:n]
-        has_lamp = True
-    else:
-        y = np.clip(linearize(ext.intensity, gamma, maxv), 0, None)
-        y = y / y.max() if y.max() > 0 else y
-        px = ext.pixel
-        has_lamp = False
+        lamp_intensity = ext_l.intensity
 
-    # --- calibración píxel → nm
+    # --- calibration pixel → nm
     if not CAL_PATH.exists():
         raise HTTPException(400, _m(
             lang, "Falta la calibración: captura el LED en la pestaña Calibración",
             "Calibration missing: capture the LED in the Calibration tab"))
-    coeffs, _ = load_cal(CAL_PATH)
-    nm = apply_cal(coeffs, px)
-    y_grid = resample(nm, y, GRID)          # conserva los NaN de la máscara
-    ok = np.isfinite(y_grid)
-    if ok.sum() < 0.4 * GRID.size:
-        raise HTTPException(400, _m(
-            lang, f"La calibración solo cubre {int(ok.sum())}/{len(GRID)} "
-                  f"puntos de la banda — recalibra",
-            f"The calibration only covers {int(ok.sum())}/{len(GRID)} points "
-            "of the band — recalibrate"))
-    # versión rellena SOLO para mostrar/serializar; el motor usa `y_grid`
-    y_show = fill_nan(y_grid)
-
-    # --- comparación
+    coeffs, cal_meta = load_cal(CAL_PATH)
+    # instrument resolution: asked by the client; otherwise the one the
+    # calibration measured with the mercury lines; otherwise the default.
+    # `0` / `"off"` disables it.
+    raw_fwhm = payload.get("fwhm")
+    if raw_fwhm in (0, "off"):
+        fwhm = None
+    elif raw_fwhm in (None, "", "auto"):
+        fwhm = float(cal_meta.get("fwhm_nm") or lib.FWHM_DEFAULT)
+    else:
+        fwhm = float(raw_fwhm)
     _, paired = get_libs(fwhm)
-    results = mtc.match(GRID, y_grid, paired, GRID,
-                        top=int(payload.get("top", 10)))
-    s_hex = lab_to_hex(lab_of_spectrum(GRID, y_grid))
-    curves: dict[str, np.ndarray] = {}
-    for r in results:
-        for sp, yv in paired:
-            if sp.name == r.spectrum.name:
-                curves[r.spectrum.name] = yv
-                break
+
+    # --- pseudo-reflectance + crossing (logic shared with app.py)
+    try:
+        an = pipeline.analyze(
+            ext.intensity, lamp_intensity, ext.pixel, coeffs, paired,
+            gamma=gamma, full_scale=maxv, smooth=5,
+            top=int(payload.get("top", 10)))
+    except pipeline.LowCoverage as e:
+        raise HTTPException(400, _m(
+            lang,
+            f"La calibración solo cubre {e.covered}/{e.total} puntos de la "
+            "banda — recalibra",
+            f"The calibration only covers {e.covered}/{e.total} points of "
+            "the band — recalibrate")) from e
+
+    results = an.results
+    y_show = an.y_show
+    curves = pipeline.curves_of(results, paired)
 
     r3 = lambda a: [round(float(v), 3) for v in a]
     r1 = lambda a: [round(float(v), 1) for v in a]
@@ -373,17 +368,17 @@ def analyze(payload: dict) -> dict:
         "brightness": round(brightness, 4),
         "rows": [int(ext.rows[0]), int(ext.rows[1])],
         "image_shape": [int(img.shape[0]), int(img.shape[1])],
-        "has_lamp": has_lamp,
-        "domain": "nm" if has_lamp else "pixel",
+        "has_lamp": an.has_lamp,
+        "domain": "nm" if an.has_lamp else "pixel",
         "gamma": gamma,
         "fwhm": fwhm,
         "verdict": results.verdict.as_dict(),
-        "coverage": round(float(ok.mean()), 4),
+        "coverage": round(an.coverage, 4),
         "profile": {"pixel": [int(p) for p in ext.pixel],
                     "intensity": r3(ext.intensity)},
         "curve": {"nm": r1(GRID), "reflectance": r3(y_show)},
         "continuum": r3(mtc.continuum_removal(GRID, y_show)),
-        "sample_color": s_hex,
+        "sample_color": an.color,
         "results": [
             {
                 "name": r.spectrum.name,
@@ -495,14 +490,14 @@ def library_stats() -> dict:
     spectra, _ = get_libs()
     from collections import Counter
     return {"total": len(spectra),
-            "categories": dict(Counter(s.category or "sin categoría"
+            "categories": dict(Counter(s.category or "uncategorized"
                                        for s in spectra).most_common()),
             "sources": dict(Counter(s.source or "?" for s in spectra).most_common())}
 
 
 @app.get("/api/library/search")
 def library_search(q: str = "", limit: int = 24, lang: str = "en") -> dict:
-    """Autocompletado: busca por nombre (prioridad) y por categoría."""
+    """Autocomplete: search by name (priority) and by category."""
     spectra, _ = get_libs()
     ql = q.strip().lower()
     if not ql:
@@ -523,7 +518,7 @@ def library_search(q: str = "", limit: int = 24, lang: str = "en") -> dict:
 
 @app.get("/api/library/spectrum")
 def library_spectrum(name: str, lang: str = "en") -> dict:
-    """Ficha de un material: datos + color + ventana visible del espectro."""
+    """Material detail card: data + color + visible window of the spectrum."""
     spectra, _ = get_libs()
     spec = next((s for s in spectra if s.name == name), None)
     if spec is None:
@@ -533,7 +528,7 @@ def library_spectrum(name: str, lang: str = "en") -> dict:
     if int(mask.sum()) < 8:
         mask = np.ones(spec.nm.shape, dtype=bool)
     nm, y = spec.nm[mask], spec.reflectance[mask]
-    if nm.size > 260:                       # submuestreo para el JSON
+    if nm.size > 260:                       # downsample for the JSON
         idx = np.linspace(0, nm.size - 1, 260).astype(int)
         nm, y = nm[idx], y[idx]
     lab = lab_of_spectrum(spec.nm, spec.reflectance)
@@ -595,7 +590,7 @@ async def library_upload(file: UploadFile = File(...)) -> dict:
     return {"ok": True, "saved": safe}
 
 
-# ------------------------------------------------------------------ estático
+# ------------------------------------------------------------------ static
 @app.get("/")
 def index() -> FileResponse:
     if not (DIST / "index.html").exists():
@@ -610,7 +605,7 @@ if (DIST / "assets").is_dir():
 
 @app.get("/{full_path:path}", include_in_schema=False)
 def spa(full_path: str) -> FileResponse:
-    """Enrutado del SPA: cualquier ruta sirve index.html."""
+    """SPA routing: any path serves index.html."""
     if full_path.startswith("api/"):
         raise HTTPException(404, "endpoint desconocido")
     candidate = DIST / full_path

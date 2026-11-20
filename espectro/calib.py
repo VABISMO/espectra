@@ -1,29 +1,30 @@
-"""Calibración píxel -> longitud de onda (nm).
+"""Calibration from pixel to wavelength (nm).
 
-Cinco modos, por orden de fiabilidad:
+Five modes, in order of reliability:
 
-1. Líneas de mercurio/CFL (`--lines`, y es lo primero que intenta el modo
-   automático): las líneas a **404,7 / 435,8 / 546,1 / 577-579 nm** son
-   estrechas, así que fijan de verdad la posición Y la curvatura.  Con
-   ≥3 líneas la precisión es de ±1-2 nm.  Con solo dos picos se asume el
-   par clásico 435,8/546,1 (solo si afirmas que la lámpara es de Hg).
+1. Mercury/CFL lines (`--lines`, and the first thing the automatic mode
+   tries): the lines at **404.7 / 435.8 / 546.1 / 577-579 nm** are
+   narrow, so they really fix both the position AND the curvature. With
+   ≥3 lines the accuracy is ±1-2 nm. With only two peaks the classic
+   435.8/546.1 pair is assumed (only if you state the lamp is Hg).
 
-2. LED blanco (`--led`, el respaldo automático): su espectro es ancho y
-   suave (pico de bomba azul ~450 nm + hump de fósforo ~560 nm), por lo
-   que solo da una calibración **afín** (offset + escala) con un error de
-   ±5-10 nm: la correlación no constriñe la curvatura.
+2. White LED (`--led`, the automatic fallback): its spectrum is broad and
+   smooth (blue pump peak ~450 nm + phosphor hump ~560 nm), so it only
+   gives an **affine** calibration (offset + scale) with ±5-10 nm error:
+   the correlation does not constrain the curvature.
 
-3. Anclas (`--anchor px nm ...`): marcas que identificas tú. Con 2 anclas
-   recta, con 3 parábola.  Es lo más preciso si tú sabes qué línea es.
+3. Anchors (`--anchor px nm ...`): marks you identify yourself. With2
+   anchors a line, with3 a parabola. Most precise when you know which
+   line each one is.
 
-4. Rango asumido (`--range 400 700`): lineal entre el primer y el último
-   píxel encendido.  Rápido pero solo orientativo.
+4. Assumed range (`--range 400 700`): linear between the first and last
+   lit pixel. Fast but only indicative.
 
-5. Cuerpo negro (`--blackbody [T]`): SOLO para bombillas de filamento
-   (tungsteno 2700-3000 K).  No sirve para LED: un LED no emite como un
-   cuerpo negro.
+5. Blackbody (`--blackbody [T]`): ONLY for filament bulbs (tungsten
+   2700-3000 K). Does not work for LED: an LED does not emit like a
+   blackbody.
 
-El resultado se guarda en JSON: coeficientes de un polinomio
+The result is saved as JSON: polynomial coefficients
 nm(p) = c[0]*p^k + ... + c[-1].
 """
 from __future__ import annotations
@@ -35,8 +36,8 @@ from pathlib import Path
 import numpy as np
 
 
-# Respuesta cuántica aproximada de un sensor CMOS con filtro IR-cut:
-# gaussiana ancha alrededor de 550 nm.
+# Approximate quantum response of a CMOS sensor with an IR-cut filter:
+# a broad Gaussian around550 nm.
 def qe_model(nm: np.ndarray, center: float = 550.0, sigma: float = 150.0) -> np.ndarray:
     return np.exp(-0.5 * ((nm - center) / sigma) ** 2)
 
@@ -57,10 +58,10 @@ def _gauss(nm: np.ndarray, center: float, sigma: float) -> np.ndarray:
 
 
 def led_template(nm: np.ndarray) -> np.ndarray:
-    """Plantilla de un LED blanco: bomba azul InGaN + fósforo + cola roja.
+    """White LED template: InGaN blue pump + phosphor + red tail.
 
-    Picos nominales: 450 nm (bomb) y 560 nm (fósforo).  Los LED reales
-    varían ±10-15 nm; la refinación por correlación absorbe esa variación.
+    Nominal peaks: 450 nm (pump) and 560 nm (phosphor). Real LEDs vary
+    ±10-15 nm; the correlation refinement absorbs that variation.
     """
     nm = np.asarray(nm, dtype=float)
     blue = _gauss(nm, 450.0, 17.0)
@@ -70,14 +71,14 @@ def led_template(nm: np.ndarray) -> np.ndarray:
 
 
 def led_model(nm: np.ndarray) -> np.ndarray:
-    """LED observado por el sensor: plantilla · respuesta cuántica."""
+    """LED as seen by the sensor: template · quantum response."""
     return led_template(nm) * qe_model(nm)
 
 
 def poly_from_anchors(anchors: list[tuple[float, float]]) -> np.ndarray:
     """anchors = [(pixel, nm), ...] -> coeficientes np.polyfit."""
     if len(anchors) < 2:
-        raise ValueError("hacen falta al menos 2 anclas (pixel, nm)")
+        raise ValueError("at least 2 anchors are required (pixel, nm)")
     px = np.array([a[0] for a in anchors], dtype=float)
     nm = np.array([a[1] for a in anchors], dtype=float)
     deg = 1 if len(anchors) == 2 else 2
@@ -86,7 +87,7 @@ def poly_from_anchors(anchors: list[tuple[float, float]]) -> np.ndarray:
 
 def linear_from_range(p0: float, p1: float, nm0: float, nm1: float) -> np.ndarray:
     if p1 <= p0:
-        raise ValueError("rango de píxeles inválido")
+        raise ValueError("invalid pixel range")
     a1 = (nm1 - nm0) / (p1 - p0)
     a0 = nm0 - a1 * p0
     return np.array([a1, a0])
@@ -108,16 +109,16 @@ def _prep(pixel, intensity):
 def _refine_shape(coeffs, p, y, model_fn,
                   da0_span=45.0, s_span=0.20, c2_span=0.0,
                   iters=2, n_da0=13, n_s=13, n_c2=9):
-    """Maximiza corr(y, model_fn(nm)) ajustando offset, escala y — solo si
-    se pide — curvatura del mapeo nm(p) = a0 + a1·p + c2·u².
+    """Maximise corr(y, model_fn(nm)) by fitting offset, scale and — only
+    if asked — curvature of the map nm(p) = a0 + a1·p + c2·u².
 
-    `c2_span` es POR DEFECTO 0 (mapeo afín) y no es un capricho: medido
-    sobre datos sintéticos, un espectro ancho y suave (LED, Planck) no
-    constriñe la curvatura.  Al ampliar el rango a ±60 nm el ganador lo
-    decide el ruido (Δr ~ 1e-6) y una calibración lineal perfecta pasa de
-    0.44 nm a 10 nm de error.  La curvatura real la fijan las líneas
-    estrechas de mercurio con ≥3 anclas (`fit_hg_lines` / `_fit_poly`),
-    donde sí hay información suficiente.
+    `c2_span` defaults to 0 (affine map) and it is not a whim: measured
+    on synthetic data, a broad smooth spectrum (LED, Planck) does not
+    constrain the curvature. Widening the range to ±60 nm makes noise the
+    decider (Δr ~ 1e-6) and a perfectly linear calibration goes from 0.44
+    nm to 10 nm of error. The real curvature is fixed by the narrow
+    mercury lines with ≥3 anchors (`fit_hg_lines` / `_fit_poly`), where
+    there is enough information.
     """
     mid = 0.5 * (p.min() + p.max())
     span = max(p.max() - p.min(), 1.0)
@@ -144,7 +145,7 @@ def _refine_shape(coeffs, p, y, model_fn,
                     if np.isfinite(r) and r > cand[0]:
                         cand = (r, a0c, a1c, c2c)
         best = cand
-        # malla geométrica: cada iteración afina alrededor del mejor
+        # geometric mesh: each iteration refines around the best
         da0_span = max(1.0, da0_span * 0.35)
         s_span = max(0.004, s_span * 0.35)
         c2_span = abs(c2_span) * 0.35      # (0 se queda en 0)
@@ -155,10 +156,10 @@ def _refine_shape(coeffs, p, y, model_fn,
     return np.array([d, a1f - 2.0 * d * mid, a0f + d * mid**2]), float(r)
 
 
-# ---------------------------------------------------- lámpara de mercurio
-# Líneas visibles del mercurio: están en cualquier lámpara de mercurio y
-# también en las CFL (mercurio + fósforo).  Son ESTRECHAS, a diferencia
-# del hump del fósforo de un LED blanco, así que fijan la curvatura.
+# ---------------------------------------------------- mercury lamp
+# Visible mercury lines: present in any mercury lamp and in CFLs too
+# (mercury + phosphor). They are NARROW, unlike a white LED's phosphor
+# hump, so they fix the curvature.
 HG_LINES: tuple[tuple[float, str], ...] = (
     (404.66, "Hg 404.7"),
     (435.83, "Hg 435.8"),
@@ -166,13 +167,13 @@ HG_LINES: tuple[tuple[float, str], ...] = (
     (576.96, "Hg 577.0"),
     (579.07, "Hg 579.1"),
 )
-# Las dos líneas visibles más intensas: par que se usa cuando solo hay
-# dos picos y el usuario afirma que la lámpara es de mercurio/CFL.
+# The two most intense visible lines: the pair used when there are only
+# two peaks and the user states the lamp is mercury/CFL.
 HG_PRIMARY = (435.83, 546.07)
 
 
 def hg_model(nm: np.ndarray, sigma: float = 3.0) -> np.ndarray:
-    """Plantilla de una lámpara de mercurio vista por el sensor (solo líneas)."""
+    """Mercury lamp template as seen by the sensor (lines only)."""
     nm = np.asarray(nm, dtype=float)
     y = np.zeros_like(nm)
     for center, _ in HG_LINES:
@@ -181,26 +182,84 @@ def hg_model(nm: np.ndarray, sigma: float = 3.0) -> np.ndarray:
 
 
 def _subpixel_peak(y: np.ndarray, i: int) -> float:
-    """Centro sub-píxel de un máximo ajustando una parábola a 3 puntos."""
+    """Sub-pixel centre of a maximum by fitting a parabola to 3 points."""
     if i <= 0 or i >= y.size - 1:
         return float(i)
     y0, y1, y2 = float(y[i - 1]), float(y[i]), float(y[i + 1])
     den = y0 - 2.0 * y1 + y2
-    if den >= 0:                       # no es un máximo convexo
+    if den >= 0:                       # not a concave maximum
         return float(i)
     d = 0.5 * (y0 - y2) / den
     return float(i) + float(np.clip(d, -1.0, 1.0))
+
+
+def _half_max_width(y: np.ndarray, i: int, win: int) -> float:
+    """Half-maximum width (pixels) of peak `i`, measured over the
+    local minimum of ±`win` pixels."""
+    n = y.size
+    lo, hi = max(0, i - win), min(n, i + win + 1)
+    base = float(np.min(y[lo:hi]))
+    half = base + 0.5 * (float(y[i]) - base)
+    l = i
+    while l > lo and y[l - 1] >= half:
+        l -= 1
+    r = i
+    while r + 1 < hi and y[r + 1] >= half:
+        r += 1
+    return float(r - l + 1)
+
+
+def measure_fwhm_nm(pixel: np.ndarray, intensity: np.ndarray,
+                    coeffs: np.ndarray,
+                    peaks: list[tuple[float, float]] | None = None,
+                    smooth: int = 5) -> float | None:
+    """Instrument spectral resolution (FWHM in nm), measured.
+
+    A mercury lamp emits lines MUCH narrower than any
+    tube, so the width we see them at IS the instrument line shape:
+    with this the system measures itself instead of assuming
+    a FWHM of 7 nm.
+
+    The median of the widths is returned; an unresolved doublet
+    (577/579 nm) comes out wider and is dropped for being >2× the median.
+    """
+    from .image import moving_average
+
+    p = np.asarray(pixel, dtype=float)
+    raw = np.asarray(intensity, dtype=float)
+    if p.size != raw.size or p.size < 8:
+        return None
+    if peaks is None:
+        peaks = detect_narrow_peaks(p, raw)
+    if not peaks:
+        return None
+    y = moving_average(raw, smooth)
+    win = max(4, int(0.05 * y.size))
+    deriv = np.polyder(np.asarray(coeffs, dtype=float))
+    widths: list[float] = []
+    for q, _h in peaks:
+        i = int(np.argmin(np.abs(p - q)))
+        disp = float(np.polyval(deriv, p[i]))        # nm per pixel
+        if disp > 0:
+            widths.append(_half_max_width(y, i, win) * disp)
+    if not widths:
+        return None
+    med = float(np.median(widths))
+    if med <= 0:
+        return None
+    keep = [w for w in widths if w <= 2.0 * med]     # fuera el doblete
+    return float(np.median(keep))
 
 
 def detect_narrow_peaks(pixel: np.ndarray, intensity: np.ndarray,
                         max_peaks: int = 8, width_frac: float = 0.08,
                         min_prom: float = 0.06, smooth: int = 5
                         ) -> list[tuple[float, float]]:
-    """Máximos ESTRECHOS (líneas) de un espectro → [(píxel, altura), ...].
+    """NARROW maxima (lines) of a spectrum → [(pixel, height), ...].
 
-    Diferencia una línea de mercurio (FWHM ~ resolución del instrumento,
-    <8 % del ancho de la banda) de la bomba azul del LED (~40 nm) y del
-    hump del fósforo (~180 nm), que se descartan por anchura.
+    Tells a mercury line (FWHM ~ instrument resolution,
+    <8 % of the band width) of the LED blue pump (~40 nm) and of the
+    phosphor hump (~180 nm)) apart, which are dropped by width.
     """
     from .image import moving_average
 
@@ -223,15 +282,8 @@ def detect_narrow_peaks(pixel: np.ndarray, intensity: np.ndarray,
         prom = float(ys[i]) - base
         if prom < min_prom * ymax:
             continue
-        half = base + 0.5 * prom
-        l = i
-        while l > lo and ys[l - 1] >= half:
-            l -= 1
-        r = i
-        while r + 1 < hi and ys[r + 1] >= half:
-            r += 1
-        if (r - l + 1) > width_frac * n:
-            continue                   # hump ancho: LED o fósforo, no línea
+        if _half_max_width(ys, i, win) > width_frac * n:
+            continue                   # wide hump: LED or phosphor, not a line
         found.append((float(p[i]) + (_subpixel_peak(ys, i) - i), float(ys[i])))
     found.sort(key=lambda t: -t[1])
     found = found[:max(1, int(max_peaks))]
@@ -243,9 +295,9 @@ def _plausible(coeffs: np.ndarray, pixel: np.ndarray,
                disp_range: tuple[float, float] = (0.03, 2.0),
                span_nm: tuple[float, float, float, float] = (
                    250.0, 520.0, 580.0, 1000.0)) -> bool:
-    """Sanidad del mapeo: creciente, dispersión física y el sensor entero
-    cayendo en una ventana razonable del visible.  Evita aceptar un par de
-    picos que en realidad no son líneas de mercurio."""
+    """Sanity of the map: increasing, physical dispersion and the whole sensor
+    falling inside a reasonable visible window. It avoids accepting a pair of
+    peaks that are really not mercury lines."""
     p = np.asarray(pixel, dtype=float)
     if p.size < 2:
         return False
@@ -262,13 +314,13 @@ def _plausible(coeffs: np.ndarray, pixel: np.ndarray,
 
 def _fit_poly(px: np.ndarray, nm: np.ndarray,
               pixel: np.ndarray) -> np.ndarray | None:
-    """Ajuste robusto píxel → nm de las líneas identificadas.
+    """Robust pixel → nm fit of the identified lines.
 
-    1. recta por mínimos cuadrados;
-    2. se descartan las líneas que no cuadran con ella (p. ej. el doblete
-       577/579 que el instrumento no separa y que queda asignado a una sola);
-    3. solo se permite curvatura si además reduce mucho el error y no se
-       dispara al extrapolar al otro extremo del sensor.
+    1. least-squares line;
+    2. lines that do not agree with it are dropped (e.g. the
+       577/579 the instrument cannot resolve and that ends up on one);
+    3. curvature is only allowed if it also greatly reduces the error
+       blows up when extrapolating to the other end of the sensor.
     """
     px = np.asarray(px, dtype=float)
     nm = np.asarray(nm, dtype=float)
@@ -286,7 +338,7 @@ def _fit_poly(px: np.ndarray, nm: np.ndarray,
         quad = np.polyfit(px, nm, 2)
         rms_lin = float(np.sqrt(np.mean(res ** 2)))
         rms_quad = float(np.sqrt(np.mean((nm - np.polyval(quad, px)) ** 2)))
-        # desacuerdo recta/parábola en TODO el sensor: si la curvatura se
+        # line/parabola disagreement over the WHOLE sensor: if curvature
         # dispara al extrapolar, no sirve (mejor la recta)
         drift = float(np.max(np.abs(np.polyval(quad, pixel)
                                     - np.polyval(lin, pixel))))
@@ -295,20 +347,20 @@ def _fit_poly(px: np.ndarray, nm: np.ndarray,
     return np.asarray(lin, dtype=float)
 
 
-# Diferencias de RMS por debajo de esto son ruido de punto flotante (el
-# ajuste pasa por los mismos puntos): desempatamos por prioridad —el par
-# clásico 435,8/546,1 va primero— para que el resultado NO dependa de la
-# versión de numpy.  Sin esto, una diferencia de 1e-13 nm en el RMS hacía
-# ganar a un par de líneas equivocado (43 nm de error en CI).
+# RMS differences below this are floating point noise (the
+# fit goes through the same points): ties are broken by priority — the
+# classic 435.8/546.1 comes first— so the result does NOT depend on the
+# numpy version. Without this, a 1e-13 nm RMS difference used to
+# make a wrong line pair win (43 nm of error in CI).
 RMS_TIE = 1e-6
 
 
 def _better_assignment(cand: tuple, best: tuple) -> bool:
-    """¿`cand` explica mejor la lámpara que `best`?  (ver RMS_TIE)."""
+    """Does `cand` explain the lamp better than `best`?  (see RMS_TIE)."""
     if cand[0] != best[0]:
-        return cand[0] < best[0]          # más picos explicados
+        return cand[0] < best[0]          # more peaks explained
     if abs(cand[1] - best[1]) <= RMS_TIE:
-        return cand[2] < best[2]          # desempate: prioridad del par
+        return cand[2] < best[2]          # tie-break: pair priority
     return cand[1] < best[1]              # menor error
 
 
@@ -316,16 +368,16 @@ def fit_hg_lines(pixel: np.ndarray, intensity: np.ndarray,
                  tol_nm: float = 3.0, min_lines: int = 3,
                  allow_pair: bool = False
                  ) -> tuple[np.ndarray, dict] | None:
-    """Calibración a partir de las líneas estrechas de mercurio / CFL.
+    """Calibration from narrow mercury / CFL lines.
 
-    Prueba todos los emparejamientos pico ↔ línea de mercurio, se queda con
-    el que explica más picos (desempate: menor error, y primero el par
-    clásico 435,8/546,1) y reajusta un polinomio con todos ellos.
+    Tries every peak ↔ mercury line assignment, keeps the one
+    that explains the most peaks (tie-break: lower error, then the
+    classic 435.8/546.1 pair) and refits a polynomial through them.
 
-    Con `allow_pair=False` hacen falta `min_lines` picos explicados (la
-    vía automática, que no puede permitirse engaños); con `allow_pair=True`
-    se aceptan solo dos picos suponiendo el par clásico — úsalo solo si
-    SABES que la lámpara es de mercurio/CFL.
+    With `allow_pair=False` `min_lines` explained peaks are required (the
+    the automatic path cannot afford mistakes); with `allow_pair=True`
+    only two peaks are accepted assuming the classic pair — use it only if
+    YOU KNOW the lamp is mercury/CFL.
 
     Devuelve (coeffs, meta) o None.
     """
@@ -374,19 +426,22 @@ def fit_hg_lines(pixel: np.ndarray, intensity: np.ndarray,
         "lines_tol_nm": tol_nm,
         "lines_classic_pair": len(used) == 2,
     }
+    fwhm = measure_fwhm_nm(pixel, intensity, coeffs, peaks)
+    if fwhm:
+        meta["fwhm_nm"] = round(float(fwhm), 2)
     return np.asarray(coeffs, dtype=float), meta
 
 
 def _explain(px: np.ndarray, coeffs: np.ndarray,
              tol_nm: float
              ) -> tuple[list[tuple[float, float, float, float]], float]:
-    """Picos que caen en una línea de mercurio y su error RMS (nm).
+    """Peaks that land on a mercury line and their RMS error (nm).
 
-    * Un pico dentro de `tol_nm` de DOS líneas más estrechas que la
-      resolución del instrumento (doblete 577/579 nm) es una mezcla: su
-      posición es el centroide de las dos, no una línea, y no sirve de ancla.
-    * Cada línea se empareja con un solo pico (el más próximo): así el
-      ruido no puede "crear" dos picos para la misma línea.
+    * A peak within `tol_nm` of TWO lines narrower than the
+      instrument resolution (577/579 nm doublet) is a blend: its
+      position is the centroid of both, not a line, and cannot anchor.
+    * Each line is paired with a single peak (the closest one): so
+      noise cannot "create" two peaks for the same line.
     """
     cands: list[tuple[float, int, float, float, float]] = []
     for idx, (q, nm) in enumerate(zip(px, np.polyval(coeffs, px))):
@@ -417,10 +472,10 @@ def _explain(px: np.ndarray, coeffs: np.ndarray,
 
 def detect_led_peaks(pixel: np.ndarray, intensity: np.ndarray
                      ) -> tuple[float, float] | None:
-    """Localiza (pico azul, pico de fósforo) en píxeles.
+    """Locates (blue peak, phosphor peak) in pixels.
 
-    Estrategia: pico global → máscara → segundo pico → validar que entre
-    ambos hay valle (si no, son lóbulos del mismo hump y se descarta).
+    Strategy: global peak → mask → second peak → check that
+    there is a valley between them (otherwise they are lobes of one hump).
     """
     from .image import moving_average
     y = moving_average(np.asarray(intensity, dtype=float),
@@ -446,18 +501,18 @@ def detect_led_peaks(pixel: np.ndarray, intensity: np.ndarray
         return None
     valley = float(y[p1:p2 + 1].min())
     if valley > 0.95 * min(y[p1], y[p2]):
-        return None                      # sin valle: es un solo hump
+        return None                      # no valley: it is a single hump
     return float(pixel[p1]), float(pixel[p2])
 
 
 def refine_led(coeffs: np.ndarray, pixel: np.ndarray,
                intensity: np.ndarray) -> tuple[np.ndarray, float]:
-    """Refina la calibración ajustando la plantilla de LED blanco.
+    """Refines the calibration against the white LED template.
 
-    Ajusta **offset y escala** (mapeo afín): un LED tiene un espectro
-    ancho y suave, así que la correlación no llega a constreñir la
+    Fits **offset and scale** (affine map): an LED has a
+    broad, smooth spectrum, so the correlation cannot constrain the
     curvatura (ver `_refine_shape`).  Si necesitas curvatura, usa la
-    calibración por líneas de mercurio/CFL con ≥3 anclas.
+    calibration from mercury/CFL lines with ≥3 anchors.
     """
     p, y = _prep(pixel, intensity)
     if p is None:
@@ -473,12 +528,12 @@ def refine_blackbody(
     c2_span: float = 0.0,
     steps: int = 61,
 ) -> tuple[np.ndarray, float, float]:
-    """Refina con la curva Planck·QE: prueba temperaturas y para cada una
-    ajusta offset/escala (y curvatura solo si se pide `c2_span`, porque la
-    correlación con un espectro ancho no la constriñe — ver `_refine_shape`).
-    SOLO para bombillas de filamento.
+    """Refine with the Planck·QE curve: try temperatures and for each one
+    fit offset/scale (and curvature only if `c2_span` is asked for, because
+    correlation with a broad spectrum does not constrain it — see `_refine_shape`).
+    ONLY for filament bulbs.
 
-    Devuelve (coeffs_nuevos, T, correlación).
+    Returns (new coeffs, T, correlation).
     """
     p, y = _prep(pixel, intensity)
     if p is None:

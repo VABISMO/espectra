@@ -1,5 +1,5 @@
 # name: PY-35_003
-# category: pigmento
+# category: pigment
 # source: Carrino et al. 2025, Zenodo 10.5281/zenodo.14906872
 wavelength_nm,reflectance
 350.0,0.120948

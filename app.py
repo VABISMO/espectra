@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Interfaz gráfica del espectrómetro (Streamlit).
+"""Graphical interface of the spectrometer (Streamlit).
 
     .venv/bin/streamlit run app.py
 
-Diseño pensado en 4 pantallas:
+Designed around4 screens:
 
-  🎯 Analizar   — subir fotos → ajustes con vista previa → resultados con
-                  color, ΔE, tabla y gráficas superpuestas + descargas.
-  🔧 Calibración— subir la foto de la bombilla, elegir método (LED
-                  automático por defecto) y guardar la calibración activa.
-  📚 Bibliotecas— ver, ampliar y subir bases de datos de materiales.
-  💡 Guía       — cómo capturar buenas fotos y qué esperar del análisis.
+  🎯 Analyze   — upload photos → settings with preview → results with
+                  colour, ΔE, table and overlaid charts + downloads.
+  🔧 Calibration — upload the bulb photo, choose the method (auto
+                  LED by default) and save the active calibration.
+  📚 Libraries— browse, extend and upload material databases.
+  💡 Guide — how to take good photos and what to expect from the analysis.
 """
 from __future__ import annotations
 
@@ -30,18 +30,15 @@ from PIL import Image
 from espectro import camara as cam
 from espectro import image as im
 from espectro import library as lib
-from espectro import match as mtc
+from espectro import pipeline
 from espectro import plotting as pl
-from espectro.calib import apply_cal, load_cal
+from espectro.calib import load_cal
 from espectro.cli import CAL_DIR, LIB_DIR, cmd_calibrate
-from espectro.color import lab_of_spectrum, lab_to_hex
-from espectro.reflectance import (fill_nan, linearize, pseudo_reflectance,
-                                  resample)
 
 ROOT = Path(__file__).resolve().parent
-GRID = np.arange(400.0, 700.0 + 1e-9, 5.0)
+GRID = pipeline.GRID          # misma rejilla que la API REST
 
-st.set_page_config(page_title="Espectrómetro", page_icon="🔬",
+st.set_page_config(page_title="Spectrometer", page_icon="🔬",
                    layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -79,7 +76,7 @@ def _to_gray(data: bytes, channel: str = "sum") -> np.ndarray:
 
 
 def _run_cli(fn, ns: argparse.Namespace) -> str:
-    """Ejecuta un subcomando del CLI capturando su salida para la UI."""
+    """Runs a CLI subcommand capturing its output for the UI."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         try:
@@ -89,7 +86,7 @@ def _run_cli(fn, ns: argparse.Namespace) -> str:
     return buf.getvalue()
 
 
-@st.cache_resource(show_spinner="Cargando bibliotecas de materiales…")
+@st.cache_resource(show_spinner="Loading material libraries…")
 def load_libs(fwhm: float | None = lib.FWHM_DEFAULT
               ) -> tuple[list[lib.Spectrum], list[tuple[lib.Spectrum, np.ndarray]]]:
     spectra = lib.load_library(LIB_DIR)
@@ -97,7 +94,7 @@ def load_libs(fwhm: float | None = lib.FWHM_DEFAULT
 
 
 def active_cal() -> tuple[np.ndarray | None, dict]:
-    """Calibración vigente: sesión > data/calibration/cal.json."""
+    """Active calibration: session > data/calibration/cal.json."""
     if "cal_coeffs" in st.session_state:
         return st.session_state["cal_coeffs"], st.session_state.get("cal_meta", {})
     default = CAL_DIR / "cal.json"
@@ -117,37 +114,37 @@ def set_active_cal(coeffs: np.ndarray, meta: dict, path: Path | None = None) -> 
 def status_sidebar(cal_info: tuple[np.ndarray | None, dict], n_lib: int) -> str:
     coeffs, meta = cal_info
     with st.sidebar:
-        st.markdown('<div class="brand">🔬 Espectrómetro</div>',
+        st.markdown('<div class="brand">🔬 Spectrometer</div>',
                     unsafe_allow_html=True)
-        st.markdown('<div class="tag">cámara USB + tubo dispersor</div>',
+        st.markdown('<div class="tag">USB camera + dispersion tube</div>',
                     unsafe_allow_html=True)
-        page = st.radio("Navegación",
-                        ["🎯 Analizar muestra", "🔧 Calibración",
-                         "📚 Bibliotecas", "💡 Guía"],
+        page = st.radio("Navigation",
+                        ["🎯 Analyze sample", "🔧 Calibration",
+                         "📚 Libraries", "💡 Guide"],
                         label_visibility="collapsed")
         st.divider()
         st.markdown("**Estado**")
         if coeffs is not None:
-            modo = {"led": "🟦 LED blanco", "lines": "⚡ Líneas de mercurio/CFL",
-                    "anchors": "📍 Anclas manuales",
-                    "range": "📏 Rango asumido",
+            modo = {"led": "🟦 White LED", "lines": "⚡ Mercury/CFL lines",
+                    "anchors": "📍 Manual anchors",
+                    "range": "📏 Assumed range",
                     "range_fallback": "📏 Rango (fallback)",
-                    "blackbody": "🔴 Cuerpo negro"}.get(
+                    "blackbody": "🔴 Blackbody"}.get(
                         meta.get("mode", "?"), meta.get("mode", "?"))
-            st.success(f"Calibración: {modo}")
+            st.success(f"Calibration: {modo}")
             if meta.get("lines"):
-                st.caption("líneas usadas: " + ", ".join(
+                st.caption("lines used: " + ", ".join(
                     f"{d['nm']:g} nm" for d in meta["lines"]))
             if meta.get("led_corr") is not None and np.isfinite(meta.get("led_corr", np.nan)):
-                st.caption(f"ajuste plantilla LED: r = {meta['led_corr']:.3f}")
+                st.caption(f"LED template fit: r = {meta['led_corr']:.3f}")
         else:
-            st.warning("Sin calibración → ve a **🔧 Calibración**")
-        st.info(f"📚 {n_lib} materiales en la base")
+            st.warning("No calibration → go to **🔧 Calibration**")
+        st.info(f"📚 {n_lib} materials in the database")
     return page
 
 
 def swatches(items: list[tuple[str, str]], title: str) -> None:
-    """Muestra una fila de muestras de color (label, hex)."""
+    """Renders a row of colour swatches (label, hex)."""
     html = f'<div style="margin:.2rem 0 .4rem 0"><b>{title}</b><br>'
     for label, hx in items:
         html += (f'<span class="swatch" style="background:{hx}"></span>'
@@ -156,7 +153,7 @@ def swatches(items: list[tuple[str, str]], title: str) -> None:
     st.markdown(html, unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------ cámara USB
+# ---------------------------------------------------------- USB camera
 def _release_cam() -> None:
     cap = st.session_state.pop("cam_cap", None)
     if cap is not None:
@@ -168,21 +165,21 @@ def _release_cam() -> None:
 
 
 def _capture_cb(slot: str) -> None:
-    """Guarda el último frame como PNG en `foto_<slot>` y congela la vista."""
+    """Saves the last frame as PNG into `photo_<slot>` and freezes the view."""
     frame = st.session_state.get("cam_frame")
     if frame is None:
         return
     buf = io.BytesIO()
     Image.fromarray(frame).save(buf, format="PNG")
-    st.session_state[f"foto_{slot}"] = buf.getvalue()
+    st.session_state[f"photo_{slot}"] = buf.getvalue()
     st.session_state["cam_live"] = False
 
 
 def camera_panel(slots: list[tuple[str, str]]) -> None:
-    """Transmisión en vivo de la cámara USB + botones de captura.
+    """Live stream of the USB camera + capture buttons.
 
-    `slots` = [(clave, etiqueta), ...]; cada botón guarda un PNG en
-    `st.session_state['foto_<clave>']`.
+    `slots` = [(key, label), ...]; every button stores a PNG in
+    `st.session_state['photo_<clave>']`.
     """
     try:
         cams = cam.probe_cameras()
@@ -191,8 +188,8 @@ def camera_panel(slots: list[tuple[str, str]]) -> None:
         return
     if not cams:
         c1, c2 = st.columns([4, 1])
-        c1.warning("No se detectó ninguna cámara USB. ¿Está enchufada? "
-                   "Comprueba también los permisos del grupo `video`.")
+        c1.warning("No USB camera detected. Is it plugged in? "
+                   "Also check the `video` group permissions.")
         if c2.button("🔄 Reintentar", key="cam_retry"):
             cam.probe_cameras(refresh=True)
             st.rerun()
@@ -204,24 +201,24 @@ def camera_panel(slots: list[tuple[str, str]]) -> None:
         return (f"/dev/video{i} — {c['w']}×{c['h']} {c['fourcc']} "
                 f"{c['fps']:.0f}fps{mono}")
 
-    idx = st.selectbox("Cámara", [c["index"] for c in cams],
+    idx = st.selectbox("Camera", [c["index"] for c in cams],
                        format_func=_label, key="cam_index",
-                       help="La del espectrómetro suele ser la que aparece "
+                       help="The spectrometer one is usually the one showing "
                             "como GREY (monochrome) o la de menor brillo")
-    live = st.checkbox("🔴 Transmisión en vivo", key="cam_live",
-                       help="Deja la cámara abierta; se cierra al "
-                            "desmarcar o al cambiar de pantalla")
+    live = st.checkbox("🔴 Live stream", key="cam_live",
+                       help="Keeps the camera open; it closes when "
+                            "uncheck it or when you change screens")
 
-    with st.expander("⚙️ Exposición de la cámara (evita saturar)"):
+    with st.expander("⚙️ Camera exposure (avoid saturating)"):
         e1, e2 = st.columns(2)
-        expo = e1.slider("Exposición (V4L2)", -30, 0, -6, key="cam_expo",
-                         help="Más negativo = menos luz. Si tu cámara no lo "
+        expo = e1.slider("Exposure (V4L2)", -30, 0, -6, key="cam_expo",
+                         help="More negative = less light. If your camera does not "
                               "admite, usa v4l2-ctl -d /dev/videoX "
                               "--set-ctrl=exposure_absolute=...")
-        auto_off = e2.checkbox("Apagar auto-exposición", True,
+        auto_off = e2.checkbox("Turn off auto-exposure", True,
                                key="cam_autoexp")
 
-    # botones de captura siempre visibles (funcionan también en vivo)
+    # capture buttons always visible (they also work while streaming)
     cols = st.columns(len(slots))
     for (key, label), col in zip(slots, cols):
         with col:
@@ -238,35 +235,35 @@ def camera_panel(slots: list[tuple[str, str]]) -> None:
                 cam.set_exposure(cap, expo, auto_off)
                 st.session_state["cam_cap"] = cap
             except Exception as e:                    # noqa: BLE001
-                st.error(f"No se pudo abrir la cámara: {e}")
+                st.error(f"Could not open the camera: {e}")
                 st.session_state["cam_live"] = False
                 return
         ph = st.empty()
         for _ in range(45):                           # ~2,7 s por pasada
             rgb = cam.read_rgb(cap)
             if rgb is None:
-                st.error("La cámara dejó de responder.")
+                st.error("The camera stopped responding.")
                 st.session_state["cam_live"] = False
                 break
             st.session_state["cam_frame"] = rgb
             ph.image(rgb, caption=_label(idx), use_container_width=True)
             time.sleep(0.06)
-        st.rerun()                                    # releer los widgets
+        st.rerun()                                    # re-read the widgets
     else:
         _release_cam()
         frame = st.session_state.get("cam_frame")
         if frame is not None:
-            st.image(frame, caption="último frame — pulsa un botón de "
-                                    "captura para usarlo",
+            st.image(frame, caption="last frame — press a button to "
+                                    "capture it to use it",
                      use_container_width=True)
 
 
 def _thumbs() -> None:
-    """Miniaturas de las fotos capturadas/subidas con su botón de borrar."""
+    """Thumbnails of the captured/uploaded photos with their delete button."""
     labels = {"sample": "Muestra", "lamp": "LED (referencia)",
-              "cal": "LED (calibración)"}
-    items = [(k, st.session_state.get(f"foto_{k}"))
-             for k in labels if st.session_state.get(f"foto_{k}")]
+              "cal": "LED (calibration)"}
+    items = [(k, st.session_state.get(f"photo_{k}"))
+             for k in labels if st.session_state.get(f"photo_{k}")]
     if not items:
         return
     cols = st.columns(len(items))
@@ -275,72 +272,72 @@ def _thumbs() -> None:
             st.markdown(f"**{labels[k]}**")
             st.image(png, use_container_width=True)
             if st.button("✖ Borrar", key=f"clr_{k}"):
-                st.session_state.pop(f"foto_{k}", None)
+                st.session_state.pop(f"photo_{k}", None)
                 st.rerun()
 
 
-# ---------------------------------------------------------- página: analizar
+# ------------------------------------------------------- analyze page
 def page_analyze(cal_info) -> None:
-    st.title("🎯 Analizar una muestra")
-    source = st.radio("Fuente de las fotos",
-                      ["📷 Cámara USB", "📁 Subir archivos"],
-                      horizontal=True, key="fuente",
-                      help="La cámara lee directamente tu espectrómetro USB")
+    st.title("🎯 Analyze a sample")
+    source = st.radio("Photo source",
+                      ["📷 USB camera", "📁 Upload files"],
+                      horizontal=True, key="photo_source",
+                      help="The camera reads your USB spectrometer directly")
 
     if source.startswith("📷"):
-        camera_panel([("sample", "📸 Capturar MUESTRA"),
-                      ("lamp", "📸 Capturar LED (referencia)")])
+        camera_panel([("sample", "📸 CAPTURE SAMPLE"),
+                      ("lamp", "📸 CAPTURE LED (reference)")])
     else:
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("#### 1 · Foto de la muestra")
-            sf = st.file_uploader("Arrastra la foto del espectro de la "
-                                  "muestra", type=["png", "jpg", "jpeg",
-                                                   "bmp", "tif", "tiff"],
+            st.markdown("#### 1 · Sample photo")
+            sf = st.file_uploader("Drag the photo of the sample spectrum",
+                                  type=["png", "jpg", "jpeg",
+                                        "bmp", "tif", "tiff"],
                                   key="up_sample")
             if sf is not None:
-                st.session_state["foto_sample"] = sf.getvalue()
-            st.caption("Misma exposición que el LED, sin saturar, en PNG.")
+                st.session_state["photo_sample"] = sf.getvalue()
+            st.caption("Same exposure as the LED, unsaturated, in PNG.")
         with c2:
-            st.markdown("#### 2 · Foto del LED (referencia)")
-            lf = st.file_uploader("Arrastra la foto del LED sin muestra "
-                                  "(cancela lámpara y sensor)",
+            st.markdown("#### 2 · LED photo (reference)")
+            lf = st.file_uploader("Drag the photo of the LED without the "
+                                  "sample (cancels lamp and sensor)",
                                   type=["png", "jpg", "jpeg", "bmp"],
                                   key="up_lamp")
             if lf is not None:
-                st.session_state["foto_lamp"] = lf.getvalue()
-            st.caption("Recomendado: sin esto solo se compara la forma bruta.")
+                st.session_state["photo_lamp"] = lf.getvalue()
+            st.caption("Recommended: without it only the raw shape is compared.")
 
     _thumbs()
-    sample_png = st.session_state.get("foto_sample")
-    lamp_png = st.session_state.get("foto_lamp")
+    sample_png = st.session_state.get("photo_sample")
+    lamp_png = st.session_state.get("photo_lamp")
 
-    with st.expander("⚙️ Ajustes de extracción y foto oscura (opcional)"):
-        dark_f = st.file_uploader("Foto oscura (misma exposición) para "
-                                  "restar ruido", type=["png", "jpg"],
+    with st.expander("⚙️ Extraction and dark-frame settings (optional)"):
+        dark_f = st.file_uploader("Dark photo (same exposure) to "
+                                  "subtract noise", type=["png", "jpg"],
                                   key="up_dark")
         a1, a2, a3 = st.columns(3)
-        axis = a1.selectbox("Eje de dispersión", ["auto", "x", "y"])
+        axis = a1.selectbox("Dispersion axis", ["auto", "x", "y"])
         channel = a2.selectbox("Canal", ["sum", "max", "r", "g", "b", "luma"],
                                index=0,
-                               help="sum = R+G+B, el correcto para bandas "
-                                    "multicolor")
-        smooth = a3.slider("Suavizado (píxeles)", 1, 41, 5, step=2)
+                               help="sum = R+G+B, the right one for multicolour "
+                                    "bands")
+        smooth = a3.slider("Smoothing (pixels)", 1, 41, 5, step=2)
         f1, f2 = st.columns(2)
-        frac = f1.slider("Umbral de banda", 0.05, 0.6, 0.25, 0.05)
-        rows_auto = f2.checkbox("Detección automática de filas", True)
+        frac = f1.slider("Band threshold", 0.05, 0.6, 0.25, 0.05)
+        rows_auto = f2.checkbox("Automatic row detection", True)
         rows = None
         if not rows_auto:
-            rr = st.slider("Filas de la banda (inicio, fin)", 0, 5000,
+            rr = st.slider("Band rows (start, end)", 0, 5000,
                            (0, 500))
             rows = tuple(rr)
 
     if sample_png is None:
-        st.markdown('<div class="step">📷 Activa la <b>transmisión en '
-                    'vivo</b>, coloca la muestra y pulsa <b>📸 Capturar '
-                    'MUESTRA</b> (y antes <b>📸 Capturar LED</b> con la '
-                    'muestra fuera del haz). O cambia a '
-                    '<i>📁 Subir archivos</i>.</div>',
+        st.markdown('<div class="step">📷 Turn on the <b>live '
+                    'stream</b>, place the sample and press <b>📸 CAPTURE '
+                    'SAMPLE</b> (and earlier <b>📸 CAPTURE LED</b> with the '
+                    'sample out of the beam). Or switch to '
+                    '<i>📁 Upload files</i>.</div>',
                     unsafe_allow_html=True)
         return
 
@@ -350,9 +347,9 @@ def page_analyze(cal_info) -> None:
                              axis=None if axis == "auto" else axis,
                              dark=dark, smooth=smooth, frac=frac)
 
-    st.markdown('<div class="step">👁️ Revisa que la franja cian cubra la '
-                'banda y que el perfil de abajo sea suave y con señal en '
-                'todo el rango.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="step">👁️ Check that the cyan strip covers the '
+                'band and that the profile below is smooth with signal across '
+                'the whole range.</div>', unsafe_allow_html=True)
     with tempfile.TemporaryDirectory() as td:
         pv = Path(td) / "prev.png"
         pl.plot_extraction(img, ext.rows, ext.pixel, ext.intensity, pv,
@@ -361,21 +358,23 @@ def page_analyze(cal_info) -> None:
 
     coeffs, meta = cal_info
     if coeffs is None:
-        st.warning("Falta la calibración píxel→nm. Ve a **🔧 Calibración** "
-                   "(solo la foto del LED, 10 segundos).")
+        st.warning("Pixel→nm calibration missing. Go to **🔧 Calibration** "
+                   "(just the LED photo,10 seconds).")
         return
     if lamp_png is None:
-        st.info("Sin foto del LED: se comparará la intensidad bruta. "
-                "Captúrala con **📸 Capturar LED** y el resultado mejora "
-                "mucho.")
+        st.info("No LED photo: raw intensity will be compared instead. "
+                "Capture it with **📸 CAPTURE LED** and the result improves "
+                "a lot.")
 
-    if st.button("🔍 Analizar y comparar con la base", type="primary",
+    if st.button("🔍 Analyze and compare", type="primary",
                  use_container_width=True):
-        with st.spinner("Extrayendo, calibrando y comparando…"):
+        with st.spinner("Extracting, calibrating and comparing…"):
             try:
                 results, grid, y_grid, s_hex = _analyze(
-                    img, ext, lamp_png, coeffs, channel, smooth, frac, rows,
-                    axis, dark)
+                    ext, lamp_png, coeffs, channel, smooth, frac, axis)
+            except pipeline.LowCoverage as e:
+                st.error(f"⚠ {e}")
+                return
             except Exception as e:                       # noqa: BLE001
                 st.error(f"No se pudo analizar: {e}")
                 return
@@ -391,51 +390,35 @@ def page_analyze(cal_info) -> None:
                       st.session_state["s_hex"])
 
 
-def _analyze(img, ext, lamp_png, coeffs, channel, smooth, frac, rows, axis,
-             dark, gamma=1.0):
+def _analyze(ext, lamp_png, coeffs, channel, smooth, frac, axis, gamma=1.0):
+    """Profile → pseudo-reflectance → crossing (see `espectro.pipeline`).
+
+    The logic lives in `espectro/pipeline.py` and is the SAME one the
+    REST API uses: here only the bulb profile is extracted and presented.
+    """
     maxv = 765.0 if channel == "sum" else 255.0
+    lamp_intensity = None
     if lamp_png:
         lamp_img = _to_gray(lamp_png, channel)
         ext_l = im.extract_profile(lamp_img, rows=None,
                                    axis=None if axis == "auto" else axis,
                                    smooth=smooth, frac=frac)
-        if ext_l.intensity.size != ext.intensity.size:
-            # recorta al común (fotos de distinto tamaño)
-            n = min(ext_l.intensity.size, ext.intensity.size)
-            y = pseudo_reflectance(ext.intensity[:n], ext_l.intensity[:n],
-                                   smooth=smooth, gamma=gamma,
-                                   full_scale=maxv)
-            px = ext.pixel[:n]
-        else:
-            y = pseudo_reflectance(ext.intensity, ext_l.intensity,
-                                   smooth=smooth, gamma=gamma,
-                                   full_scale=maxv)
-            px = ext.pixel
-    else:
-        y = np.clip(linearize(ext.intensity, gamma, maxv), 0, None)
-        y = y / y.max() if y.max() > 0 else y
-        px = ext.pixel
-
-    nm = apply_cal(coeffs, px)
-    y_grid = resample(nm, y, GRID)          # conserva los NaN de la máscara
-    ok = np.isfinite(y_grid)
-    if ok.sum() < 0.4 * GRID.size:
-        raise ValueError("la calibración no cubre la banda de la foto "
-                         f"(solo {ok.sum()}/{GRID.size} puntos); recalibra")
-    spectra, paired = load_libs()
-    results = mtc.match(GRID, y_grid, paired, GRID, top=10)
-    s_hex = lab_to_hex(lab_of_spectrum(GRID, y_grid))
-    # para mostrar/graficar se rellenan los huecos; el cruce usa los NaN
-    return results, GRID, fill_nan(y_grid), s_hex
+        lamp_intensity = ext_l.intensity
+    _, paired = load_libs()
+    an = pipeline.analyze(ext.intensity, lamp_intensity, ext.pixel, coeffs,
+                          paired, gamma=gamma, full_scale=maxv,
+                          smooth=smooth, top=10)
+    # gaps are filled for display; the crossing uses the NaN
+    return an.results, GRID, an.y_show, an.color
 
 
 def _show_results(results, grid, y_grid, s_hex) -> None:
     if not results:
-        st.error("Sin coincidencias. Prueba a subir la bombilla de "
-                 "referencia o revisa la calibración.")
+        st.error("No matches. Try uploading the reference bulb "
+                 "reference or review the calibration.")
         return
     top = results[0]
-    # curvas de los candidatos ya re-muestreadas a la rejilla
+    # candidate curves already resampled onto the grid
     lib_curves = {r.name: y for r, y in lib.to_grid(
         [r.spectrum for r in results], GRID, fwhm=lib.FWHM_DEFAULT)}
 
@@ -443,36 +426,36 @@ def _show_results(results, grid, y_grid, s_hex) -> None:
     w1, w2 = st.columns([3, 1])
     with w1:
         st.markdown(f"### 🏆 {top.spectrum.name}")
-        st.caption(f"Categoría: {top.spectrum.category or '—'} · "
-                   f"fuente: {top.spectrum.source or '—'}")
+        st.caption(f"Category: {top.spectrum.category or '—'} · "
+                   f"source: {top.spectrum.source or '—'}")
     with w2:
-        st.metric("Confianza (score)", f"{top.score:.2f}",
+        st.metric("Confidence (score)", f"{top.score:.2f}",
                   f"ΔE color = {top.delta_e:.1f}")
     v = getattr(results, "verdict", None)
     if v is not None and v.label != "identified":
         st.warning({
-            "unknown": ("⚠ DESCONOCIDO: ningún candidato llega al umbral "
-                        f"(score ≥ {v.min_score:.2f}). La muestra puede ser "
-                        "plana, estar dominada por ruido o no estar en la "
-                        "biblioteca."),
-            "uncertain": ("⚠ DUDOSO: hay candidatos buenos pero no se "
-                          "distingue entre familias (margen "
+            "unknown": ("⚠ UNKNOWN: no candidate reaches the threshold "
+                        f"(score ≥ {v.min_score:.2f}). The sample may be "
+                        "featureless, noise-dominated, or absent from the "
+                        "library."),
+            "uncertain": ("⚠ UNCERTAIN: there are good candidates but they "
+                          "cannot be told apart (margin "
                           f"{v.margin:.3f} < {v.min_margin:.2f})."),
         }.get(v.label, ""))
-    swatches([("muestra", s_hex), (top.spectrum.name.split(' [')[0][:14],
+    swatches([("sample", s_hex), (top.spectrum.name.split(' [')[0][:14],
                                    top.color_hex)],
-             "Color (D65): muestra vs mejor candidato")
+             "Colour (D65): sample vs best candidate")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    tabs = st.tabs(["📈 Curvas superpuestas", "🪞 Bandas (continuo)",
-                    "🧮 Tabla de resultados", "⬇️ Descargas"])
+    tabs = st.tabs(["📈 Overlaid curves", "🪞 Bands (continuum)",
+                    "🧮 Results table", "⬇️ Downloads"])
     with tabs[0]:
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "cmp.png"
             pl.plot_matches(grid, y_grid, results, lib_curves, p)
             st.image(str(p), use_container_width=True)
-        st.caption("Negro = tu muestra (pseudo-reflectancia). Las líneas de "
-                   "color son los materiales candidatos.")
+        st.caption("Black = your sample (pseudo-reflectance). The "
+                   "coloured lines are the candidate materials.")
 
     with tabs[1]:
         import matplotlib
@@ -482,7 +465,7 @@ def _show_results(results, grid, y_grid, s_hex) -> None:
         from espectro.match import continuum_removal
         fig, ax = plt.subplots(figsize=(10, 4.2))
         ax.plot(grid, continuum_removal(grid, y_grid), "k-", lw=2.2,
-                label="muestra")
+                label="sample")
         for r in results[:5]:
             spec_curve = lib_curves.get(r.spectrum.name)
             if spec_curve is not None:
@@ -495,73 +478,74 @@ def _show_results(results, grid, y_grid, s_hex) -> None:
         ax.legend(fontsize=8)
         st.pyplot(fig)
         plt.close(fig)
-        st.caption("Tras quitar el 'continuo' solo quedan las bandas de "
-                   "absorción: la firma química real del material.")
+        st.caption("After removing the 'continuum' only the absorption "
+                   "bands remain: the real chemical signature of the "
+                   "material.")
 
     with tabs[2]:
         import pandas as pd
         df = pd.DataFrame([r.as_row() for r in results])
         st.dataframe(df, use_container_width=True, hide_index=True)
-        st.caption("score = 0.20·ángulo espectral + 0.10·bandas + "
-                   "0.70·color (ΔE), con penalización por bandas mal "
-                   "ajustadas (esa penalización no depende de los pesos). "
-                   "ΔE: <5 casi idéntico, >20 muy distinto.")
+        st.caption("score = 0.20·spectral angle + 0.10·bands + "
+                   "0.70·colour (ΔE), with a penalty for badly "
+                   "matched bands (that penalty does not depend on the weights). "
+                   "ΔE: <5 nearly identical, >20 very different.")
 
     with tabs[3]:
         import pandas as pd
         csv = pd.DataFrame([r.as_row() for r in results]).to_csv(
             index=False).encode()
-        st.download_button("⬇️ Descargar resultados (CSV)", csv,
-                           "coincidencias.csv", "text/csv")
+        st.download_button("⬇️ Download results (CSV)", csv,
+                           "matches.csv", "text/csv")
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "cmp.png"
             pl.plot_matches(grid, y_grid, results, lib_curves, p)
-            st.download_button("⬇️ Descargar gráfica (PNG)", Path(p).read_bytes(),
-                               "comparacion.png", "image/png")
+            st.download_button("⬇️ Download chart (PNG)", Path(p).read_bytes(),
+                               "comparison.png", "image/png")
 
 
-# ------------------------------------------------------ página: calibración
+# ---------------------------------------------------- calibration page
 def page_calibrate(cal_info) -> None:
-    st.title("🔧 Calibración píxel → nanómetros")
-    st.markdown('<div class="step">Si tienes una <b>lámpara de mercurio o '
-                'CFL</b>, sus líneas estrechas (404,7 / 435,8 / 546,1 / '
-                '577-579 nm) son lo más preciso: fijan posición y '
-                'curvatura (±1-2 nm). Con un <b>LED blanco</b> solo hay '
-                'dos marcas — pico azul ~450 nm y hump de fósforo ~560 nm '
-                '— y el resultado es afín (±5-10 nm). Hazlo <b>una vez</b> '
-                'y al cambiar el montaje.</div>', unsafe_allow_html=True)
+    st.title("🔧 Calibration pixel → nanometers")
+    st.markdown('<div class="step">If you have a <b>mercury or '
+                'CFL lamp</b>, its narrow lines (404.7 / 435.8 / 546.1 / '
+                '577-579 nm) are the most accurate: they fix position and '
+                'curvature (±1-2 nm). With a <b>white LED</b> there are only '
+                'two marks — blue peak ~450 nm and phosphor hump ~560 nm '
+                '— and the result is affine (±5-10 nm). Do it <b>once</b> '
+                'and whenever you change the setup.</div>', unsafe_allow_html=True)
 
-    src = st.radio("Fuente del LED", ["📷 Cámara USB", "📁 Subir archivo"],
-                   horizontal=True, key="fuente_cal")
+    src = st.radio("LED source", ["📷 USB camera", "📁 Upload file"],
+                   horizontal=True, key="photo_source_cal")
     if src.startswith("📷"):
-        camera_panel([("cal", "📸 Capturar LED para calibrar")])
+        camera_panel([("cal", "📸 CAPTURE LED to calibrate")])
         _thumbs()
-        data = st.session_state.get("foto_cal")
+        data = st.session_state.get("photo_cal")
     else:
-        f = st.file_uploader("📷 Foto del espectro del LED (sin muestra)",
+        f = st.file_uploader("📷 Photo of the LED spectrum (no sample)",
                              type=["png", "jpg", "jpeg", "bmp"],
                              key="up_cal")
         data = f.getvalue() if f is not None else None
 
-    method = st.radio("Método", ["🎯 Automático (líneas Hg → LED)",
-                                 "⚡ Líneas de mercurio/CFL",
-                                 "🟦 LED blanco",
-                                 "📍 Anclas manuales",
-                                 "📏 Rango asumido",
-                                 "🔴 Cuerpo negro (solo filamento)"],
+    method = st.radio("Method", ["🎯 Automatic (Hg lines → LED)",
+                                 "⚡ Mercury/CFL lines",
+                                 "🟦 White LED",
+                                 "📍 Manual anchors",
+                                 "📏 Assumed range",
+                                 "🔴 Blackbody (filament only)"],
                       horizontal=True)
 
     anchors = None
     if method.startswith("📍"):
-        st.caption("Indica pares (píxel, nm). Con lámpara de mercurio: "
-                   "435.8, 546.1, 577 y 579 nm.")
+        st.caption("Enter pairs (pixel, nm). With a mercury lamp: "
+                   "435.8, 546.1, 577 and 579 nm.")
         if "anchor_rows" not in st.session_state:
             st.session_state.anchor_rows = [{"px": 0, "nm": 450.0},
                                             {"px": 1000, "nm": 700.0}]
         edited = st.data_editor(st.session_state.anchor_rows, num_rows="dynamic",
                                 column_config={
                                     "px": st.column_config.NumberColumn(
-                                        "píxel", min_value=0),
+                                        "pixel", min_value=0),
                                     "nm": st.column_config.NumberColumn(
                                         "longitud de onda (nm)", min_value=100.0,
                                         max_value=2500.0)})
@@ -569,18 +553,18 @@ def page_calibrate(cal_info) -> None:
                    if r.get("px") is not None]
     rng = None
     if method.startswith("📏"):
-        a, b = st.number_input("nm del inicio de la banda", 100.0, 2500.0,
+        a, b = st.number_input("nm at band start", 100.0, 2500.0,
                                400.0), st.number_input(
-            "nm del final de la banda", 100.0, 2500.0, 700.0)
+            "nm at band end", 100.0, 2500.0, 700.0)
         rng = [a, b]
     bb = None
     if method.startswith("🔴"):
-        bb = st.slider("Temperatura de color de la bombilla (K)", 2000, 4000,
+        bb = st.slider("Bulb colour temperature (K)", 2000, 4000,
                        3000, 50)
 
     if st.button("⚙️ Calibrar", type="primary", disabled=data is None):
         if data is None:
-            st.warning("Captura o sube primero la foto del LED.")
+            st.warning("Capture or upload the LED photo first.")
         else:
             with tempfile.TemporaryDirectory() as td:
                 img_path = Path(td) / "led.png"
@@ -609,10 +593,10 @@ def page_calibrate(cal_info) -> None:
             st.json(m)
 
     st.divider()
-    st.markdown("#### 💾 Calibraciones guardadas")
+    st.markdown("#### 💾 Saved calibrations")
     saved = sorted(CAL_DIR.glob("*.json")) if CAL_DIR.exists() else []
     if not saved:
-        st.caption("Aún no hay calibraciones guardadas.")
+        st.caption("No saved calibrations yet.")
     else:
         cols = st.columns(min(4, len(saved)))
         for i, p in enumerate(saved):
@@ -624,46 +608,46 @@ def page_calibrate(cal_info) -> None:
                 st.caption(f"{p.name} · {p.stat().st_size} B")
 
 
-# ----------------------------------------------------- página: bibliotecas
+# ------------------------------------------------------ library page
 def page_library() -> None:
-    st.title("📚 Bibliotecas de materiales")
+    st.title("📚 Material libraries")
     spectra, _ = load_libs()
     from collections import Counter
-    cats = Counter((s.category or "sin categoría") for s in spectra)
+    cats = Counter((s.category or "uncategorized") for s in spectra)
     srcs = Counter((s.source or "?") for s in spectra)
 
     m = st.columns(3)
     m[0].metric("Espectros", len(spectra))
-    m[1].metric("Categorías", len(cats))
+    m[1].metric("Categories", len(cats))
     m[2].metric("Colecciones", len(srcs))
-    st.bar_chart({"Materiales por categoría": dict(cats.most_common())},
+    st.bar_chart({"Materials by category": dict(cats.most_common())},
                  horizontal=True)
 
-    st.markdown("#### Añadir colecciones")
+    st.markdown("#### Add collections")
     st.caption("· USGS splib05a (740 ya incluidos) · pigmentos Zenodo "
-               "(116 ya incluidos) · ECOSTRESS >3400 (descarga manual en "
+               "(116 already included) · ECOSTRESS >3400 (manual download at "
                "speclib.jpl.nasa.gov, se leen sus .spectrum.txt) · USGS v7 "
-               "· cualquier CSV propio wavelength_nm,reflectance")
+               "· any own CSV wavelength_nm,reflectance")
     sc1, sc2 = st.columns(2)
-    if sc1.button("⬇️ Descargar USGS splib05a"):
+    if sc1.button("⬇️ Download USGS splib05a"):
         _run_script("scripts/fetch_usgs.py")
-    if sc2.button("⬇️ Descargar pigmentos (Zenodo)"):
+    if sc2.button("⬇️ Download pigments (Zenodo)"):
         _run_script("scripts/fetch_pigments.py")
 
-    st.markdown("#### Subir un espectro propio")
+    st.markdown("#### Upload your own spectrum")
     up = st.file_uploader("CSV con columnas wavelength_nm,reflectance",
                           type=["csv", "txt", "asc"])
-    if up is not None and st.button("Guardar en la biblioteca"):
+    if up is not None and st.button("Save into the library"):
         dest = LIB_DIR / "mis_espectros"
         dest.mkdir(parents=True, exist_ok=True)
         (dest / up.name).write_bytes(up.getvalue())
         load_libs.clear()
-        st.success(f"Guardado {up.name}. Ya está en el análisis.")
+        st.success(f"Saved {up.name}. It is now available for analysis.")
         st.rerun()
 
 
 def _run_script(rel: str) -> None:
-    with st.spinner(f"Ejecutando {rel}…"):
+    with st.spinner(f"Running {rel}…"):
         r = subprocess.run([sys.executable, str(ROOT / rel)],
                            capture_output=True, text=True, timeout=1800)
     (st.code if r.returncode == 0 else st.error)(r.stdout[-3000:])
@@ -671,50 +655,51 @@ def _run_script(rel: str) -> None:
         st.error(r.stderr[-2000:])
     else:
         load_libs.clear()
-        st.success("Listo — biblioteca actualizada.")
+        st.success("Done — library updated.")
 
 
-# --------------------------------------------------------------- página: guía
+# ----------------------------------------------------------- guide page
 def page_guide() -> None:
-    st.title("💡 Guía rápida")
+    st.title("💡 Quick guide")
     st.markdown("""
-**Flujo completo (3 pasos, una sola vez la calibración):**
+**Full flow (3 steps, calibration only once):**
 
-1. **🔧 Calibración** — fotografía tu LED blanco sin muestra → *LED
-   automático* → guardar. Repetir solo si cambias el montaje o el foco.
-2. **🎯 Analizar** — sube la *foto de la muestra* y la *foto del LED*
-   (misma exposición) → *Analizar*.
-3. Lee el resultado: mejor candidato, score, ΔE de color y las curvas
-   superpuestas. Descarga CSV/PNG si quieres.
+1. **🔧 Calibration** — photograph your white LED with no sample → *auto
+   LED* → save. Repeat only if you change the setup or the light source.
+2. **🎯 Analyze** — upload the *sample photo* and the *LED photo*
+   (same exposure) → *Analyze*.
+3. Read the result: best candidate, score, colour ΔE and the overlaid
+   curves. Download CSV/PNG if you want.
 
-**Captura correcta**
+**Good capture**
 
-| Hacer | Evitar |
+| Do | Avoid |
 |---|---|
-| Misma exposición en LED y muestra | Auto-exposición distinta |
-| PNG/BMP sin procesar | JPEG (introduce bandas falsas) |
-| Sin píxeles a 255 (saturado) | Banda roja/azul recortada |
-| Foto oscura para restar ruido | Ruido de fondo sin restar |
-| Banda nítida y centrada | Banda difusa o cortada |
+| Same exposure on LED and sample | Different auto-exposure |
+| Raw PNG/BMP | JPEG (introduces fake bands) |
+| No pixels at 255 (saturated) | Clipped red/blue band |
+| Dark photo to subtract noise | Background noise not subtracted |
+| Sharp, centred band | Diffuse or cut-off band |
 
-**Qué mide y qué no**
+**What it measures and what it does not**
 
-- La división *muestra ÷ LED* cancela lámpara, óptica y sensor → conserva
-  la forma espectral (pseudo-reflectancia). No es reflectancia absoluta.
-- Solo se ve **400-700 nm**: muchos materiales se parecen en el visible.
-  El score combina tres señales: forma espectral (SAM), bandas de
-  absorción (continuo) y **color CIELAB (ΔE)** — por eso el color de la
-  muestra se muestra junto al candidato.
-- Para máxima precisión: **lámpara de mercurio** (picos 435.8 / 546.1 /
-  577 nm) y calibra con *Anclas manuales* (±1-2 nm en vez de ±10).
+- The *sample ÷ LED* division cancels lamp, optics and sensor → keeps
+  the spectral shape (pseudo-reflectance). It is not absolute
+  reflectance.
+- Only **400-700 nm** is visible: many materials look alike there.
+  The score combines three signals: spectral shape (SAM),
+  absorption bands (continuum) and **CIELAB colour (ΔE)** — which is why
+  the sample swatch is shown next to the candidate.
+- For maximum accuracy: **mercury lamp** (lines 435.8 / 546.1 /
+  577 nm) and calibrate with *manual anchors* (±1-2 nm instead of ±10).
 
-**Interpretación del score**
+**Reading the score**
 
-| score | significado |
+| score | meaning |
 |---|---|
-| > 0.85 + ΔE < 8 | muy probable |
-| 0.65 – 0.85 | candidato razonable, mira las bandas |
-| < 0.65 | material no está en la biblioteca o hay ruido/calibración mal |
+| > 0.85 + ΔE < 8 | very likely |
+| 0.65 – 0.85 | reasonable candidate, look at the bands |
+| < 0.65 | material not in the library, or noise/bad calibration |
 """)
 
 
@@ -728,7 +713,7 @@ def main() -> None:
     elif page.startswith("🔧"):
         page_calibrate(cal_info)
     else:
-        _release_cam()          # la cámara solo vive en las pantallas de toma
+        _release_cam()          # the camera only lives on the capture screens
         if page.startswith("📚"):
             page_library()
         else:

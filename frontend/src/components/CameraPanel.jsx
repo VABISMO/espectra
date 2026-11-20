@@ -1,4 +1,4 @@
-/* Panel de cámara USB compartido: vista en vivo + captura en ranuras */
+/* Shared USB camera panel: live view + slot capture */
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Html, useLang } from '../lang.jsx'
@@ -15,7 +15,7 @@ export default function CameraPanel({ slots, status, refresh, hint }) {
 
   useEffect(() => {
     if (camIdx == null && cameras.length) {
-      // prioriza SIEMPRE la USB externa (y libre), nunca la del portátil
+      // ALWAYS prefers the external (free) USB one, never the laptop's
       const builtin = (c) => /integrated|internal|laptop|interno/i.test(c.name || '')
       const externals = cameras.filter((c) => !builtin(c))
       const pool = externals.length ? externals : cameras

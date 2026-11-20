@@ -73,6 +73,14 @@ export const STRINGS = {
     'an.empty': 'Results will appear here: <b>best candidate</b>, overlaid curves, absorption bands and a table with score, ΔE and color.',
     'an.best': 'best candidate',
     'an.noCategory': 'no category',
+    // categorías de materiales: los datos van en inglés, la UI las traduce
+    'cat.Minerals': 'Minerals',
+    'cat.Vegetation': 'Vegetation',
+    'cat.Soils and Mixtures': 'Soils and Mixtures',
+    'cat.Artificial materials': 'Artificial materials',
+    'cat.Coatings': 'Coatings',
+    'cat.pigment': 'pigment',
+    'cat.paint': 'paint',
     'an.withLamp': 'with LED reference',
     'an.noLamp': 'no LED reference',
     'an.gammaApply': 'Linearize camera gamma (2.2)',
@@ -156,6 +164,7 @@ export const STRINGS = {
     'cal.log.formula': 'nm(p) = c0·p² + c1·p + c2',
     'cal.log.peaks': 'peaks: blue p={a} · phosphor p={b}',
     'cal.log.lines': 'Hg lines: {v}',
+    'cal.log.fwhm': 'instrument resolution: FWHM {v} nm (used when matching)',
     'cal.log.fit': 'LED template fit: r={v}',
     'cal.log.T': 'T = {v} K',
     'cal.active': 'Active calibration: {mode}',
@@ -319,6 +328,14 @@ export const STRINGS = {
     'an.empty': 'Los resultados aparecerán aquí: <b>mejor candidato</b>, curvas superpuestas, bandas de absorción y tabla con score, ΔE y color.',
     'an.best': 'mejor candidato',
     'an.noCategory': 'sin categoría',
+    // categorías de materiales: los datos van en inglés, la UI las traduce
+    'cat.Minerals': 'minerales',
+    'cat.Vegetation': 'vegetación',
+    'cat.Soils and Mixtures': 'suelos y mezclas',
+    'cat.Artificial materials': 'materiales artificiales',
+    'cat.Coatings': 'recubrimientos',
+    'cat.pigment': 'pigmento',
+    'cat.paint': 'pintura',
     'an.withLamp': 'con referencia LED',
     'an.noLamp': 'sin referencia LED',
     'an.gammaApply': 'Linealizar gamma de la cámara (2,2)',
@@ -401,6 +418,7 @@ export const STRINGS = {
     'cal.log.formula': 'nm(p) = c0·p² + c1·p + c2',
     'cal.log.peaks': 'picos: azul p={a} · fósforo p={b}',
     'cal.log.lines': 'líneas Hg: {v}',
+    'cal.log.fwhm': 'resolución del instrumento: FWHM {v} nm (se usa al comparar)',
     'cal.log.fit': 'ajuste plantilla LED: r={v}',
     'cal.log.T': 'T = {v} K',
     'cal.active': 'Calibración activa: {mode}',
@@ -501,4 +519,11 @@ export function translate(lang, key, vars) {
     }
   }
   return s
+}
+
+/** Localized label for a material category (the data itself is English). */
+export function categoryLabel(lang, cat) {
+  if (!cat) return cat
+  const key = `cat.${cat}`
+  return STRINGS[lang]?.[key] ?? STRINGS.en[key] ?? cat
 }

@@ -1,4 +1,4 @@
-/* Captura el resultado del análisis (tarjeta del material identificado) */
+/* Captures the analysis result (identified material card) */
 import { chromium } from 'playwright'
 
 const errors = []

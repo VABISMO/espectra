@@ -1,4 +1,4 @@
-/* Página Analizar: captura → ajustes → identificación */
+/* Analyze page: capture → settings → identification */
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import CameraPanel from '../components/CameraPanel.jsx'
@@ -7,7 +7,7 @@ import ScoreRing from '../components/ScoreRing.jsx'
 import { Html, useLang } from '../lang.jsx'
 
 export default function Analyze({ status, refresh, go }) {
-  const { t } = useLang()
+  const { t, cat } = useLang()
   const [cfg, setCfg] = useState({
     axis: 'auto', channel: 'sum', smooth: 5, frac: 0.25,
     rowsAuto: true, rows: [0, 400], gammaApply: false,
@@ -18,7 +18,7 @@ export default function Analyze({ status, refresh, go }) {
   const [tab, setTab] = useState('curvas')
   const resultRef = useRef(null)
 
-  // al terminar el análisis, lleva la vista al resultado
+  // once the analysis finishes, scroll to the result
   useEffect(() => {
     if (!result) return
     const id = setTimeout(() => {
@@ -162,7 +162,7 @@ export default function Analyze({ status, refresh, go }) {
               onChange={(e) => set('rowsAuto', e.target.checked)} />
             {t('an.autoRows')}
           </label>
-          <label title="si la cámara de 8 bits aplica gamma, actívalo antes de dividir"
+          <label title="if the8-bit camera applies gamma, turn it on before dividing"
             style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#a3b0cc', fontSize: 13 }}>
             <input type="checkbox" checked={cfg.gammaApply} style={{ width: 15, height: 15 }}
               onChange={(e) => set('gammaApply', e.target.checked)} />
@@ -222,7 +222,7 @@ export default function Analyze({ status, refresh, go }) {
                       {t(`an.verdict.${result.verdict.label}`)}
                     </span>
                   )}
-                  <span className="chip">{winner.category || t('an.noCategory')}</span>
+                  <span className="chip">{cat(winner.category) || t('an.noCategory')}</span>
                   <span className="chip info">{winner.source}</span>
                   <span className="chip violet">ΔE {winner.delta_e}</span>
                   <span className="chip">SAM {winner.sam_deg}°</span>
@@ -355,7 +355,7 @@ export default function Analyze({ status, refresh, go }) {
                           <span className="colorchip" style={{ background: r.color }} />
                           {r.name}
                         </td>
-                        <td style={{ color: '#a3b0cc' }}>{r.category || '—'}</td>
+                        <td style={{ color: '#a3b0cc' }}>{cat(r.category) || '—'}</td>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                             <div className="scorebar" style={{ width: 74 }}>

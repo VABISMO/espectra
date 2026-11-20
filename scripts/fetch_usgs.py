@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Descarga la USGS Digital Spectral Library (splib05a) y la convierte a CSV.
+"""Download the USGS Digital Spectral Library (splib05a) and convert it to CSV.
 
-Fuente: Clark, R.N. et al. 2003, USGS Open-File Report 03-395
+Source: Clark, R.N. et al. 2003, USGS Open-File Report 03-395
         https://pubs.usgs.gov/of/2003/ofr-03-395/datatable.html
 
-Uso:
-    python scripts/fetch_usgs.py                 # todo (M, S, C, A, V)
-    python scripts/fetch_usgs.py --chapters M    # solo minerales
-    python scripts/fetch_usgs.py --limit 50      # prueba rápida
+Usage:
+    python scripts/fetch_usgs.py                 # all (M, S, C, A, V)
+    python scripts/fetch_usgs.py --chapters M    # minerals only
+    python scripts/fetch_usgs.py --limit 50      # quick test
 
-Salida:
-    data/libraries/usgs_splib05a/   archivos .asc originales (crudo)
-    data/libraries/usgs/            un CSV por espectro: wavelength_nm,reflectance
+Output:
+    data/libraries/usgs_splib05a/   original .asc files (raw)
+    data/libraries/usgs/            one CSV per spectrum: wavelength_nm,reflectance
 
-Los .asc tienen 3 columnas: longitud de onda (micras), reflectancia,
-desviación estándar.  `***********` marca canales borrados.
+The .asc files have 3 columns: wavelength (microns), reflectance,
+standard deviation.  `***********` marks deleted channels.
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def fetch(url: str, timeout: float = 60.0, retries: int = 5) -> bytes:
 
 
 def parse_index(html: str) -> list[tuple[str, str]]:
-    """Devuelve [(capitulo, href relativo), ...] sin duplicados."""
+    """Returns [(chapter, relative href), ...] without duplicates."""
     out, seen = [], set()
     for href in re.findall(r'href=["\']([^"\']+\.asc)["\']', html, re.IGNORECASE):
         if href in seen:
@@ -78,9 +78,9 @@ def parse_index(html: str) -> list[tuple[str, str]]:
 
 
 def parse_asc(text: str, href: str) -> tuple[str, list[tuple[float, float]]]:
-    """Extrae (nombre, [(nm, reflectancia), ...]) de un archivo .asc."""
+    """Extracts (name, [(nm, reflectance), ...]) from an .asc file."""
     lines = text.splitlines()
-    # línea 15 (índice 14) = título; los datos empiezan en la línea 17 (índice 16)
+    # line 15 (index 14) = title; data starts at line 17 (index 16)
     title = lines[14].strip() if len(lines) > 14 else Path(href).stem
     name = title.split("  ")[0].strip() or Path(href).stem
     name = re.sub(r"\s+", " ", name)
@@ -122,19 +122,19 @@ def save_csv(path: Path, name: str, pts: list[tuple[float, float]],
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--chapters", default=DEFAULT_CHAPTERS,
-                    help=f"capítulos a descargar ({''.join(CHAPTER_NAMES)})")
+                    help=f"chapters to download ({''.join(CHAPTER_NAMES)})")
     ap.add_argument("--limit", type=int, default=0,
-                    help="máximo de archivos (0 = todos)")
+                    help="max number of files (0 = all)")
     ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args(argv)
 
     wanted = set(args.chapters.upper())
-    print("Descargando índice de datos USGS splib05a ...")
+    print("Downloading the USGS splib05a data index ...")
     index = fetch(INDEX).decode("utf-8", "replace")
     entries = [(c, h) for c, h in parse_index(index) if c in wanted]
     if args.limit:
         entries = entries[: args.limit]
-    print(f"  {len(entries)} archivos .asc en capítulos {sorted(wanted)}")
+    print(f"  {len(entries)} .asc files in chapters {sorted(wanted)}")
 
     RAW.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             if (ok + fail) % 50 == 0:
                 print(f"  ... {ok + fail}/{len(entries)}")
 
-    print(f"Listo: {ok} espectros convertidos en {OUT}  (fallos: {fail})")
+    print(f"Done: {ok} spectra converted into {OUT}  (failures: {fail})")
     return 0 if fail == 0 else 1
 
 

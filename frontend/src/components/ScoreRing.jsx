@@ -1,4 +1,4 @@
-/* Anillo de puntuación circular (SVG) */
+/* Circular score ring (SVG) */
 export default function ScoreRing({ score = 0, size = 132 }) {
   const r = (size - 14) / 2
   const c = 2 * Math.PI * r

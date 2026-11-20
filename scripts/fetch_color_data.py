@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Descarga los datos estándar de colorimetría y los empaqueta con el proyecto.
+"""Download the standard colorimetry data and bundle it with the project.
 
-* Funciones de igualación CIE 1931 2º (x̄, ȳ, z̄)
-* Iluminante CIE D65 (espectro de potencia relativo)
+* CIE 1931 2° color matching functions (x̄, ȳ, z̄)
+* CIE D65 illuminant (relative power spectrum)
 
-Fuentes: colour-science (dominio público / BSD-3) que empaqueta los datos
-oficiales CIE.  Se guardan como CSV para que el programa funcione sin red.
+Sources: colour-science (public domain / BSD-3), which packages the
+official CIE data.  Saved as CSV so the program works offline.
 
-Salida:
+Output:
     espectro/data/cmf_cie1931_2deg.csv   wavelength_nm,x_bar,y_bar,z_bar
     espectro/data/illuminant_d65.csv     wavelength_nm,spd
 """
@@ -67,37 +67,37 @@ def extract_dict(src: str, key: str) -> dict[float, tuple[float, ...]]:
                              body):
             out[float(m.group(1))] = (float(m.group(2)),)
     if not out:
-        raise ValueError(f"dict vacío para {key}")
+        raise ValueError(f"empty dict for {key}")
     return out
 
 
 def main() -> int:
     DEST.mkdir(parents=True, exist_ok=True)
 
-    print("Descargando funciones de igualación CIE 1931 ...")
+    print("Downloading CIE 1931 color matching functions ...")
     cmfs_src = get(CMFS_URL)
     cmf = extract_dict(cmfs_src, "CIE 1931 2 Degree Standard Observer")
     p = DEST / "cmf_cie1931_2deg.csv"
     with p.open("w", encoding="utf-8") as fh:
         fh.write("# CIE 1931 2 Degree Standard Observer (CIE 1931)\n")
-        fh.write("# fuente: colour-science (datos oficiales CIE)\n")
+        fh.write("# source: colour-science (official CIE data)\n")
         fh.write("# wavelength_nm,x_bar,y_bar,z_bar\n")
         for wl in sorted(cmf):
             x, y, z = cmf[wl][:3]
             fh.write(f"{wl:.0f},{x:.6f},{y:.6f},{z:.6f}\n")
-    print(f"  {len(cmf)} puntos en {p}")
+    print(f"  {len(cmf)} points written to {p}")
 
-    print("Descargando iluminante D65 ...")
+    print("Downloading D65 illuminant ...")
     sds_src = get(SDS_URL)
     d65 = extract_dict(sds_src, "D65")
     p = DEST / "illuminant_d65.csv"
     with p.open("w", encoding="utf-8") as fh:
         fh.write("# CIE Illuminant D65 (SPD relativo)\n")
-        fh.write("# fuente: colour-science (datos oficiales CIE)\n")
+        fh.write("# source: colour-science (official CIE data)\n")
         fh.write("# wavelength_nm,spd\n")
         for wl in sorted(d65):
             fh.write(f"{wl:.0f},{d65[wl][0]:.6f}\n")
-    print(f"  {len(d65)} puntos en {p}")
+    print(f"  {len(d65)} points written to {p}")
     return 0
 
 

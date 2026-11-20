@@ -1,13 +1,13 @@
-"""Carga de bibliotecas de espectros de referencia.
+"""Loading of spectral reference libraries.
 
-Formatos soportados
--------------------
-* CSV/TSV genérico  : 2 columnas (longitud de onda, reflectancia) con o sin
-  cabecera; detecta µm vs nm y 0-1 vs 0-100 automáticamente.
-* USGS splib05a .asc (o su CSV ya convertido por scripts/fetch_usgs.py)
-* ECOSTRESS .spectrum.txt (cabecera clave:valor + bloques Wavelength/Reflectance)
+Supported formats
+-----------------
+* Generic CSV/TSV  : 2 columns (wavelength, reflectance), header optional;
+  detects µm vs nm and 0-1 vs 0-100 automatically.
+* USGS splib05a .asc (or the CSV already converted by scripts/fetch_usgs.py)
+* ECOSTRESS .spectrum.txt (key:value header + Wavelength/Reflectance blocks)
 
-Todas las bibliotecas se normalizan a: nombre, categoría, nm, reflectancia 0-1.
+Every library is normalized to: name, category, nm, reflectance 0-1.
 """
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+from .color import lab_of_spectrum
+from .reflectance import band_depths, continuum_removal
 
 BAD_VALUES = re.compile(r"^\*+$")
 
@@ -33,12 +36,36 @@ class Spectrum:
 
     @property
     def visible(self) -> bool:
-        """¿Cubre alguna zona del visible (400-700 nm)?"""
+        """Does it cover any part of the visible (400-700 nm)?"""
         return bool(self.nm.size and self.nm.max() >= 400 and self.nm.min() <= 700)
 
 
+@dataclass(eq=False)
+class Prepared:
+    """Spectrum resampled to the grid with its derived values precomputed.
+
+    `lab`, `cr` and `depth` only depend on (y, grid), so they are computed
+    once in `to_grid` instead of on every `match()`: measured with
+    cProfile, the candidate's color (25 %) and continuum (24 %) were about
+    half of the crossing time.
+
+    `eq=False` so dataclass comparison does not try to equal numpy arrays.
+    It is iterable as a `(spectrum, y)` pair, so code doing
+    `for sp, y in paired` keeps working.
+    """
+    spectrum: Spectrum
+    y: np.ndarray
+    lab: tuple[float, float, float]
+    cr: np.ndarray        # R / continuo
+    depth: np.ndarray     # 1 - cr (band depth)
+
+    def __iter__(self):
+        yield self.spectrum
+        yield self.y
+
+
 def _normalize_y(nm: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Ajusta unidades: nm y reflectancia en 0-1."""
+    """Normalize units: nm and reflectance in 0-1."""
     nm = np.asarray(nm, dtype=float)
     y = np.asarray(y, dtype=float)
     if nm.size and np.nanmax(nm) < 50:          # estaba en micras
@@ -52,7 +79,7 @@ def _normalize_y(nm: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]
 
 
 def _dedupe(nm: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Promedia valores duplicados en la misma longitud de onda."""
+    """Average values duplicated at the same wavelength."""
     if nm.size == 0:
         return nm, y
     out_nm, out_y = [], []
@@ -68,7 +95,7 @@ def _dedupe(nm: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _sniff(text: str) -> tuple[list[str], list[list[str]]]:
-    """Detecta delimitador y devuelve (campos_cabecera, filas)."""
+    """Detect the delimiter and return (header fields, rows)."""
     lines = [ln for ln in text.splitlines()
              if ln.strip() and not ln.lstrip().startswith(("#", "//"))]
     if not lines:
@@ -95,7 +122,7 @@ def _sniff(text: str) -> tuple[list[str], list[list[str]]]:
 def load_csv(path: str | Path) -> Spectrum:
     path = Path(path)
     text = path.read_text(encoding="utf-8", errors="replace")
-    # metadatos "# name:" / "# category:" del propio CSV
+    # "# name:" / "# category:" metadata from the CSV itself
     meta: dict = {}
     for ln in text.splitlines():
         if ln.startswith("#") and ":" in ln:
@@ -104,7 +131,7 @@ def load_csv(path: str | Path) -> Spectrum:
 
     header, rows = _sniff(text)
     if not rows:
-        raise ValueError(f"{path}: sin filas de datos")
+        raise ValueError(f"{path}: no data rows")
 
     cols: dict[str, int] = {}
     for i, h in enumerate(header):
@@ -128,7 +155,7 @@ def load_csv(path: str | Path) -> Spectrum:
         except ValueError:
             continue
     if len(nm) < 8:
-        raise ValueError(f"{path}: solo {len(nm)} puntos válidos")
+        raise ValueError(f"{path}: only {len(nm)} valid points")
 
     nm, y = _normalize_y(np.array(nm), np.array(y))
     nm, y = _dedupe(nm, y)
@@ -139,7 +166,7 @@ def load_csv(path: str | Path) -> Spectrum:
 
 
 def load_usgs_asc(path: str | Path) -> Spectrum:
-    """Parser del formato .asc de splib05a (3 columnas, µm)."""
+    """Parser for the splib05a .asc format (3 columns, µm)."""
     path = Path(path)
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     title = lines[14].strip() if len(lines) > 14 else path.stem
@@ -155,15 +182,15 @@ def load_usgs_asc(path: str | Path) -> Spectrum:
             continue
     if len(nm) < 8:
         raise ValueError(f"{path}: espectro demasiado corto")
-    cat = {"M": "mineral", "S": "suelo", "C": "recubrimiento",
-           "A": "artificial", "L": "líquido", "O": "orgánico",
-           "V": "vegetación"}.get(path.parent.name.split("_")[0][:1].upper(), "")
+    cat = {"M": "mineral", "S": "soil", "C": "coating",
+           "A": "artificial", "L": "liquid", "O": "organic",
+           "V": "vegetation"}.get(path.parent.name.split("_")[0][:1].upper(), "")
     return Spectrum(name=title, nm=np.array(nm), reflectance=np.array(y),
                     category=cat, source="USGS splib05a", path=str(path))
 
 
 def load_ecostress(path: str | Path) -> Spectrum:
-    """Parser tolerante del formato .spectrum.txt de ECOSTRESS/ASTER."""
+    """Tolerant parser for the ECOSTRESS/ASTER .spectrum.txt format."""
     path = Path(path)
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     meta: dict = {}
@@ -193,7 +220,7 @@ def load_ecostress(path: str | Path) -> Spectrum:
     wl = block_after("wavelength")
     rf = block_after("reflectance")
     if len(wl) < 8 or len(rf) < 8:
-        # variante de dos columnas separadas por coma/espacio
+        # comma/space separated two-column variant
         header, rows = _sniff(path.read_text(encoding="utf-8", errors="replace"))
         wl, rf = [], []
         for r in rows:
@@ -235,14 +262,14 @@ def load_spectrum(path: str | Path) -> Spectrum:
 def load_library(root: str | Path,
                  categories: set[str] | None = None,
                  min_points: int = 8) -> list[Spectrum]:
-    """Carga recursivamente todos los espectros de un directorio.
+    """Recursively load every spectrum in a directory.
 
-    categories: filtra por subcadena en nombre o categoría
-                (p.ej. {"mineral", "vegeta"}).
+    categories: filter by substring in name or category
+                (e.g. {"mineral", "vegeta"}).
     """
     root = Path(root)
     if not root.exists():
-        raise FileNotFoundError(f"biblioteca no encontrada: {root}")
+        raise FileNotFoundError(f"library not found: {root}")
     out: list[Spectrum] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in {
@@ -261,7 +288,7 @@ def load_library(root: str | Path,
             if not any(c.lower() in blob for c in categories):
                 continue
         out.append(spec)
-    # sin duplicados: el mismo título aparece en varios capítulos de la USGS
+    # no duplicates: the same title appears in several USGS chapters
     seen: dict[str, int] = {}
     unique: list[Spectrum] = []
     for s in out:
@@ -273,19 +300,20 @@ def load_library(root: str | Path,
     return unique
 
 
-# Resolución espectral típica del instrumento (FWHM, nm).  La USGS se
-# muestrea a 0.5-5 nm y la cámara resuelve ~5-10 nm: sin degradar, las
-# referencias parecen "más nítidas" de lo que el instrumento puede ver.
+# Typical instrument spectral resolution (FWHM, nm). USGS is sampled at
+# 0.5-5 nm and the camera resolves ~5-10 nm: without degrading, the
+# references look "sharper" than the instrument can ever see.
 FWHM_DEFAULT = 7.0
 
 
 def degrade_resolution(nm: np.ndarray, y: np.ndarray,
                        fwhm_nm: float | None = FWHM_DEFAULT) -> np.ndarray:
-    """Convoluciona una curva con una gaussiana de FWHM `fwhm_nm`.
+    """Convolve a curve with a Gaussian of FWHM `fwhm_nm`.
 
-    Aproximación de la función de línea de instrumento (ILS) como gaussiana.
-    `fwhm_nm <= 0` o None devuelve la curva sin tocar; si el muestreo de
-    origen ya es más grueso que el instrumento tampoco hay nada que hacer.
+    Approximates the instrument line shape (ILS) as a Gaussian.
+    `fwhm_nm <= 0` or None returns the curve untouched; if the source
+    sampling is already coarser than the instrument there is nothing
+    to do either.
     """
     if not fwhm_nm or fwhm_nm <= 0:
         return np.asarray(y, dtype=float)
@@ -299,7 +327,7 @@ def degrade_resolution(nm: np.ndarray, y: np.ndarray,
         return y
     step = float(np.median(d))
     if step <= 0 or step >= float(fwhm_nm):
-        return y                      # ya más grueso que el instrumento
+        return y                      # already coarser than the instrument
     sigma = float(fwhm_nm) / 2.35482  # FWHM = 2·sqrt(2·ln2)·σ
     s_steps = sigma / step
     if s_steps < 0.25:
@@ -307,21 +335,25 @@ def degrade_resolution(nm: np.ndarray, y: np.ndarray,
     r = int(np.ceil(3.0 * s_steps))
     k = np.exp(-0.5 * (np.arange(-r, r + 1, dtype=float) / s_steps) ** 2)
     k /= k.sum()
-    padded = np.pad(y, r, mode="edge")   # sin ceros: no inventa bandas
+    padded = np.pad(y, r, mode="edge")   # no zeros: does not invent bands
     return np.convolve(padded, k, mode="valid")
 
 
 def to_grid(specs: list[Spectrum], grid: np.ndarray,
-            fwhm: float | None = FWHM_DEFAULT) -> list[tuple[Spectrum, np.ndarray]]:
-    """Re-muestrea cada espectro a la rejilla común; descarta solapes < 60%.
+            fwhm: float | None = FWHM_DEFAULT) -> list[Prepared]:
+    """Resample every spectrum to the common grid; drops overlap < 60%.
 
-    Antes de re-muestrear, `fwhm` degrada cada referencia a la resolución
-    espectral del instrumento (gaussiana de FWHM `fwhm` nm): la muestra ya
-    llega medida con la función de línea del tubo, así que comparar contra
-    referencias sin degradar favorece artificialmente a las que por azar
-    tienen la forma justa.  `fwhm=None` lo desactiva.
+    Before resampling, `fwhm` degrades each reference to the instrument's
+    spectral resolution (Gaussian of FWHM `fwhm` nm): the sample already
+    arrives measured through the tube's line shape, so comparing against
+    undegraded references artificially favours whichever ones happen to
+    have the right shape.  `fwhm=None` disables it.
+
+    Returns `Prepared`: besides the curve it carries the CIELAB color and
+    the removed continuum, which only depend on (curve, grid) and are
+    therefore computed here exactly once.
     """
-    res: list[tuple[Spectrum, np.ndarray]] = []
+    res: list[Prepared] = []
     need = grid.size
     lo, hi = float(grid.min()), float(grid.max())
     for s in specs:
@@ -333,13 +365,15 @@ def to_grid(specs: list[Spectrum], grid: np.ndarray,
         yg = np.interp(grid, s.nm[m], y[m], left=np.nan, right=np.nan)
         if np.isnan(yg).mean() > 0.4:
             continue
-        # huecos: se extiende el último valor medido (no se rellena con la
-        # media, eso inventaría una meseta plana en mitad de la curva)
+        # gaps: extend the last measured value (filling with the mean
+        # would invent a flat plateau in the middle of the curve)
         ok = np.isfinite(yg)
         if not ok.all():
             if not ok.any():
                 continue
             gx = np.arange(need, dtype=float)
             yg = np.interp(gx, gx[ok], yg[ok])
-        res.append((s, yg))
+        cr = continuum_removal(grid, yg)
+        res.append(Prepared(s, yg, lab_of_spectrum(grid, yg),
+                            cr, band_depths(cr)))
     return res

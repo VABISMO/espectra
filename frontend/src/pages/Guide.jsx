@@ -1,4 +1,4 @@
-/* Página Guía: cómo capturar e interpretar (EN/ES) */
+/* Guide page: how to capture and how to read it (EN/ES) */
 import { Html, useLang } from '../lang.jsx'
 
 export default function Guide() {

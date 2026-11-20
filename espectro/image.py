@@ -1,12 +1,12 @@
-"""Extracción del perfil espectral a partir de la fotografía de la cámara.
+"""Spectral profile extraction from the camera photograph.
 
-La foto es una banda luminosa cuyo eje largo corresponde a la dispersión
-(longitud de onda) y cuyo eje corto es la anchura de la rendija/banda.
+The photo is a bright strip whose long axis is the dispersion direction
+(wavelength) and whose short axis is the slit/band width.
 
-Funciones principales
----------------------
-load_gray        -> imagen en punto flotante
-extract_profile  -> intensidad vs. píxel (y filas usadas)
+Main functions
+--------------
+load_gray        -> image as float
+extract_profile  -> intensity vs. pixel (plus the rows used)
 save_spectrum    -> CSV  pixel,intensity
 """
 from __future__ import annotations
@@ -21,16 +21,16 @@ CHANNELS = ("sum", "max", "r", "g", "b", "luma")
 
 
 def array_gray(arr: np.ndarray, channel: str = "sum") -> np.ndarray:
-    """Aplica el canal a un array de imagen (H×W o H×W×3/4) → float64.
+    """Apply `channel` to an image array (H×W or H×W×3/4) → float64.
 
-    sum  = R+G+B  (recomendado: respuesta plana ante igual DN en cualquier
-           canal, ideal para una banda espectral multicolor)
+    sum  = R+G+B  (recommended: flat response to the same DN on any
+           channel, ideal for a multicolour spectral band)
     max  = max(R,G,B)
-    r/g/b= un solo canal
-    luma = 0.2126R+0.7152G+0.0722B (pesos de luminancia: deforma el azul)
+    r/g/b= a single channel
+    luma = 0.2126R+0.7152G+0.0722B (luminance weights: distorts blue)
     """
     if channel not in CHANNELS:
-        raise ValueError(f"channel debe ser uno de {CHANNELS}")
+        raise ValueError(f"channel must be one of {CHANNELS}")
     arr = np.asarray(arr, dtype=np.float64)
     if arr.ndim == 2:
         return arr
@@ -52,7 +52,7 @@ def array_gray(arr: np.ndarray, channel: str = "sum") -> np.ndarray:
 
 
 def load_gray(path: str | Path, channel: str = "sum") -> np.ndarray:
-    """Carga una imagen como float64 aplicando `channel` (ver array_gray)."""
+    """Load an image as float64 applying `channel` (see array_gray)."""
     img = Image.open(path)
     if img.mode in ("P", "PA", "1"):
         img = img.convert("RGB")
@@ -63,21 +63,21 @@ def load_gray(path: str | Path, channel: str = "sum") -> np.ndarray:
 
 @dataclass
 class Extraction:
-    pixel: np.ndarray          # índice de píxel a lo largo del eje de dispersión
-    intensity: np.ndarray      # intensidad media (oscura restada)
-    rows: tuple[int, int]      # filas usadas (incluido el extremo superior)
-    axis: str                  # 'x' (dispersión en columnas) o 'y'
-    preview: np.ndarray | None = None   # imagen recortada a la banda
+    pixel: np.ndarray          # pixel index along the dispersion axis
+    intensity: np.ndarray      # mean intensity (dark subtracted)
+    rows: tuple[int, int]      # rows used (upper bound included)
+    axis: str                  # 'x' (dispersion across columns) or 'y'
+    preview: np.ndarray | None = None   # image cropped to the band
 
 
 def _detect_axis(img: np.ndarray) -> str:
-    """El eje de dispersión es el que está 'encendido' durante más tramo.
+    """The dispersion axis is the one that stays 'on' for longer.
 
-    La banda es una franja fina: en el eje transversal solo una fracción
-    pequeña de filas/columnas tiene señal; en el eje de dispersión la
-    banda suele recorrer casi toda la imagen.  Desempata por estructura
-    (número de giros de pendiente tras suavizar): el espectro varía más
-    que el perfil gaussial transversal de la banda.
+    The band is a thin strip: across it only a small fraction of the
+    rows/columns has signal; along the dispersion axis the band usually
+    crosses almost the whole image.  Ties are broken by structure (how
+    many slope turns after smoothing): the spectrum varies more than the
+    band's transverse Gaussian profile.
     """
 
     def score(p: np.ndarray) -> tuple[float, float]:
@@ -96,13 +96,13 @@ def _detect_axis(img: np.ndarray) -> str:
 
 
 def _find_band(profile: np.ndarray, frac: float = 0.25) -> tuple[int, int]:
-    """Filas cuya intensidad supera `frac` del máximo (tronco continuo)."""
+    """Rows whose intensity exceeds `frac` of the maximum (longest run)."""
     thr = profile.max() * frac
     above = profile >= thr
     if not above.any():
         return 0, profile.size
     idx = np.flatnonzero(above)
-    # tramo más largo de filas encendidas
+    # longest run of lit rows
     breaks = np.flatnonzero(np.diff(idx) > 1)
     starts = np.concatenate(([0], breaks + 1))
     ends = np.concatenate((breaks, [idx.size - 1]))
@@ -130,14 +130,14 @@ def extract_profile(
     smooth: int = 5,
     frac: float = 0.25,
 ) -> Extraction:
-    """Extrae intensidad vs. píxel promediando sobre la banda luminosa.
+    """Extract intensity vs. pixel by averaging over the bright band.
 
-    img     : imagen cargada con load_gray
-    rows    : (fila_inicio, fila_fin) fijas a mano; si es None se detecta
-    axis    : 'x' (dispersión en columnas, típico) o 'y'; None = autodetección
-    dark    : imagen oscura (mismas dimensiones) o valor escalar a restar
-    smooth  : ventana de media móvil (1 = sin suavizar)
-    frac    : fracción del máximo para considerar una fila "encendida"
+    img     : image loaded with load_gray
+    rows    : fixed (start_row, end_row); detected when None
+    axis    : 'x' (dispersion across columns, typical) or 'y'; None = auto
+    dark    : dark image (same size) or scalar value to subtract
+    smooth  : moving-average window (1 = no smoothing)
+    frac    : fraction of the maximum for a row to count as "lit"
     """
     if axis is None:
         axis = _detect_axis(img)
@@ -147,7 +147,7 @@ def extract_profile(
     if isinstance(dark, np.ndarray):
         d = dark.T if axis == "y" else dark
         if d.shape != img.shape:
-            raise ValueError(f"imagen oscura {d.shape} != imagen {img.shape}")
+            raise ValueError(f"dark image {d.shape} != image {img.shape}")
         work = img - d
     elif dark is not None:
         work = img - float(dark)
@@ -189,7 +189,7 @@ def save_spectrum(path: str | Path, pixel: np.ndarray, intensity: np.ndarray,
 
 
 def load_spectrum(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    """Lee un CSV con 2 columnas numéricas (ignora cabeceras '#')."""
+    """Read a CSV with 2 numeric columns ('#' headers are ignored)."""
     xs, ys = [], []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -205,7 +205,7 @@ def load_spectrum(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
                 xs.append(float(parts[0]))
                 ys.append(float(parts[1]))
             except ValueError:
-                continue  # fila de cabecera sin comentarios
+                continue  # header row without comments
     if len(xs) < 8:
-        raise ValueError(f"{path}: demasiadas pocas filas numéricas ({len(xs)})")
+        raise ValueError(f"{path}: too few numeric rows ({len(xs)})")
     return np.asarray(xs), np.asarray(ys)

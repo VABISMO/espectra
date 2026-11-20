@@ -1,11 +1,11 @@
-"""Captura directa desde cámaras USB (UVC) con OpenCV/V4L2.
+"""Direct capture from USB cameras (UVC) with OpenCV/V4L2.
 
     from espectro.camara import probe_cameras, open_camera, read_rgb
 
-Las cámaras UVC suelen exponer dos nodos por dispositivo (imagen +
-metadatos); solo los de imagen abren.  El sondeo se cachea con TTL y si
-un dispositivo está ocupado (p. ej. por la propia vista en vivo) se lista
-igualmente desde sysfs como `openable: False`.
+UVC cameras usually expose two nodes per device (image + metadata); only
+the image ones can be opened.  Probing is cached with a TTL, and a busy
+device (e.g. blocked by the live view itself) is still listed from sysfs
+as `openable: False`.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import time as _time
 import numpy as np
 
 _cam_cache: dict = {"ts": -1e9, "cams": []}
-_TTL = 20.0        # segundos de validez del sondeo
+_TTL = 20.0        # seconds the probe stays valid
 
 
 def cv2_module():
@@ -23,17 +23,17 @@ def cv2_module():
         return cv2
     except ImportError as exc:                       # pragma: no cover
         raise RuntimeError(
-            "OpenCV no está instalado → .venv/bin/pip install "
+            "OpenCV is not installed → .venv/bin/pip install "
             "opencv-python-headless") from exc
 
 
 def probe_cameras(max_index: int = 6, refresh: bool = False) -> list[dict]:
-    """Lista de cámaras utilizables:
+    """List of usable cameras:
     [{'index','w','h','fourcc','fps','name','openable'}...].
 
-    `name` viene de sysfs y permite distinguir la webcam integrada del
-    portátil de una USB real.  Si un dispositivo no abre (ocupado) pero
-    existe en sysfs, se lista igualmente con openable=False.
+    `name` comes from sysfs and tells the laptop's built-in webcam apart
+    from a real USB one.  A device that cannot be opened (busy) but does
+    exist in sysfs is still listed with openable=False.
     """
     global _cam_cache
     now = _time.monotonic()
@@ -56,8 +56,8 @@ def probe_cameras(max_index: int = 6, refresh: bool = False) -> list[dict]:
         cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
         if not cap.isOpened():
             cap.release()
-            # ocupada: la listamos solo si no es un nodo duplicado
-            # (los nodos de metadatos comparten el nombre con su cámara)
+            # busy: list it only if it is not a duplicate node
+            # (metadata nodes share the name with their camera)
             if sname and sname not in seen:
                 seen.add(sname)
                 found.append({"index": i, "w": 0, "h": 0, "fourcc": "",
@@ -65,7 +65,7 @@ def probe_cameras(max_index: int = 6, refresh: bool = False) -> list[dict]:
             continue
         if sname and sname in seen:
             cap.release()
-            continue                      # nodo duplicado (metadatos)
+            continue                      # duplicate node (metadata)
         if sname:
             seen.add(sname)
         fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
@@ -85,37 +85,37 @@ def probe_cameras(max_index: int = 6, refresh: bool = False) -> list[dict]:
 
 
 def is_builtin(cam_info: dict) -> bool:
-    """¿Es la webcam integrada del portátil?"""
+    """Is it the laptop's built-in webcam?"""
     n = (cam_info.get("name") or "").lower()
     return any(k in n for k in ("integrated", "internal", "laptop",
                                 "interno", "built-in"))
 
 
 def default_index(cams: list[dict]) -> int | None:
-    """Índice por defecto: SIEMPRE una cámara USB externa si existe
-    (nunca la integrada del portátil)."""
+    """Default index: ALWAYS an external USB camera when one exists
+    (never the built-in laptop one)."""
     extern = [c for c in cams if not is_builtin(c)]
     pool = extern or cams
     return pool[0]["index"] if pool else None
 
 
 def open_camera(index: int, warmup: int = 6):
-    """Abre /dev/video<index> y descarta los primeros frames."""
+    """Open /dev/video<index> and discard the first frames."""
     cv2 = cv2_module()
     cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
     if not cap.isOpened():
-        raise RuntimeError(f"No se pudo abrir /dev/video{index}")
+        raise RuntimeError(f"could not open /dev/video{index}")
     for _ in range(max(0, warmup)):
         cap.read()
     return cap
 
 
 def read_rgb(cap) -> np.ndarray | None:
-    """Siguiente frame en RGB (uint8, HxWx3) o None si falla."""
+    """Next frame in RGB (uint8, HxWx3) or None on failure."""
     ok, frame = cap.read()
     if not ok or frame is None:
         return None
-    if frame.ndim == 2:                     # sensores monochrome (GREY)
+    if frame.ndim == 2:                     # monochrome sensors (GREY)
         frame = np.stack([frame] * 3, axis=-1)
     elif frame.shape[-1] == 4:
         frame = frame[..., :3]
@@ -124,13 +124,13 @@ def read_rgb(cap) -> np.ndarray | None:
 
 def set_exposure(cap, value: float | None = None,
                  auto_off: bool = True) -> bool:
-    """Control de exposición V4L2.  `auto_off=True` → manual (usa `value`);
-    `auto_off=False` → restaura la auto-exposición de la cámara.
-    Devuelve si la cámara admitió algo."""
+    """V4L2 exposure control.  `auto_off=True` → manual (uses `value`);
+    `auto_off=False` → restores the camera auto-exposure.
+    Returns whether the camera accepted anything."""
     cv2 = cv2_module()
     changed = False
     if auto_off:
-        for v in (0.25, 0):                       # modo manual (varía por driver)
+        for v in (0.25, 0):                       # manual mode (driver dependent)
             try:
                 if cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, v):
                     changed = True
@@ -144,7 +144,7 @@ def set_exposure(cap, value: float | None = None,
             except Exception:                     # noqa: BLE001
                 pass
     else:
-        for v in (1.0, 0.75):                     # modo automático
+        for v in (1.0, 0.75):                     # automatic mode
             try:
                 if cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, v):
                     changed = True

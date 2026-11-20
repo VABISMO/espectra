@@ -1,22 +1,22 @@
-"""Conversión a pseudo-reflectancia y re-muestreo.
+"""Conversion to pseudo-reflectance and re-sampling.
 
-Con una bombilla de referencia se divide el espectro de la muestra entre el
-de la bombilla: así se cancelan la lámpara, la transmisión óptica del tubo
-y la respuesta del sensor.  El resultado NO es reflectancia absoluta
-(falta el blanco de referencia), pero conserva la forma espectral, que es
-lo que usamos para comparar con las bibliotecas.
+With a reference bulb the sample spectrum is divided by the bulb's, which
+cancels the lamp, the tube's optical transmission and the sensor
+response.  The result is NOT absolute reflectance (there is no white
+reference), but it keeps the spectral shape, which is what we use to
+compare against the libraries.
 
-Dos matices importantes:
+Two important details:
 
-* **Gamma**: si la cámara de 8 bits entrega valores con gamma aplicada,
-  hay que linealizarlos ANTES de dividir (`gamma=2.2`); en caso contrario
-  la división devuelve (s/l)^γ y las bandas de absorción quedan
-  comprimidas.  Desactivado por defecto (`gamma=1.0`).
+* **Gamma**: if the 8-bit camera delivers gamma-encoded values they must
+  be linearized BEFORE dividing (`gamma=2.2`); otherwise the division
+  returns (s/l)^γ and the absorption bands come out compressed.
+  Disabled by default (`gamma=1.0`).
 
-* **Zonas sin lámpara**: donde la bombilla es débil la razón no tiene
-  sentido y se devuelve NaN, nunca 0.  Un cero artificial crearía una
-  banda de absorción falsa en el rojo y desplazaría el color.  El NaN
-  viaja hasta `match()`, que solo evalúa los puntos válidos.
+* **Lamp-less zones**: where the bulb is weak the ratio is meaningless
+  and NaN is returned, never 0.  An artificial zero would create a fake
+  absorption band in the red and shift the color.  The NaN travels to
+  `match()`, which only evaluates the valid points.
 """
 from __future__ import annotations
 
@@ -25,24 +25,24 @@ import numpy as np
 
 def linearize(y: np.ndarray, gamma: float = 1.0,
               full_scale: float | None = None) -> np.ndarray:
-    """Deshace la codificación gamma de una cámara de 8 bits.
+    """Undo the gamma encoding of an 8-bit camera.
 
-    gamma      : exponente aplicado por la cámara (1.0 = sin efecto).
-    full_scale : DN que corresponde al blanco saturado (255 en un canal,
-                 765 en R+G+B).  Si no se da, se usa el máximo de `y`.
+    gamma      : exponent applied by the camera (1.0 = no effect).
+    full_scale : DN that corresponds to saturated white (255 on one channel,
+                 765 on R+G+B). Defaults to the maximum of `y`.
     """
     if gamma is None or abs(float(gamma) - 1.0) < 1e-9:
         return np.asarray(y, dtype=float)
     g = float(gamma)
     if g <= 0:
-        raise ValueError("gamma debe ser > 0")
+        raise ValueError("gamma must be > 0")
     y = np.asarray(y, dtype=float)
     fs = float(full_scale) if full_scale else max(float(np.nanmax(y)), 1e-12)
     return np.power(np.clip(y, 0.0, fs) / fs, 1.0 / g) * fs
 
 
 def _smooth_nan(y: np.ndarray, window: int | None) -> np.ndarray:
-    """Media móvil que respeta los NaN (no arrastra ceros a zonas válidas)."""
+    """Moving average that respects NaN (does not drag zeros into valid zones)."""
     y = np.asarray(y, dtype=float)
     if window is None or window <= 1:
         return y
@@ -66,13 +66,13 @@ def pseudo_reflectance(sample: np.ndarray,
                        floor_frac: float = 0.03,
                        gamma: float = 1.0,
                        full_scale: float | None = None) -> np.ndarray:
-    """R(p) = muestra(p) / bombilla(p), con NaN donde la bombilla es débil.
+    """R(p) = sample(p) / bulb(p), NaN where the bulb is weak.
 
-    `floor_frac` es la fracción del máximo de la bombilla por debajo de la
-    cual la razón es ruido puro (colas del LED por encima de ~680 nm, valle
-    azul-verde ~470-490 nm): esos puntos se marcan NaN en lugar de
-    dividirse o rellenarse con cero.  La máscara se decide con la señal
-    CRUDA de la bombilla (el S/N no depende de la gamma).
+    `floor_frac` is the fraction of the bulb maximum below which the ratio
+    is pure noise (LED tails above ~680 nm, blue-green valley ~470-490 nm):
+    those points are marked NaN instead of being divided or zero-filled.
+    The mask is decided on the RAW bulb signal (S/N does not depend on
+    gamma).
     """
     raw_l = np.asarray(lamp, dtype=float)
     thr = max(float(np.nanmax(raw_l)) * floor_frac, 1e-12)
@@ -81,18 +81,18 @@ def pseudo_reflectance(sample: np.ndarray,
     s = linearize(sample, gamma, full_scale)
     l = linearize(lamp, gamma, full_scale)
     if s.shape != l.shape:
-        raise ValueError(f"tamaños distintos: {s.shape} vs {l.shape}")
+        raise ValueError(f"shape mismatch: {s.shape} vs {l.shape}")
     ratio = np.divide(s, l, out=np.full_like(s, np.nan),
                       where=mask & (l > 0.0))
-    ratio = np.clip(ratio, 0.0, 3.0)        # NaN se propaga a través de clip
+    ratio = np.clip(ratio, 0.0, 3.0)        # NaN propagates through clip
     return _smooth_nan(ratio, smooth)
 
 
 def fill_nan(y: np.ndarray) -> np.ndarray:
-    """Rellena NaN interpolando linealmente entre los puntos válidos.
+    """Fill NaN by linear interpolation between the valid points.
 
-    Solo para visualización / JSON: el motor (`match`) trabaja con la
-    versión que conserva los NaN y descarta esos puntos.
+    Only for display / JSON: the engine (`match`) works with the version
+    that keeps the NaN and discards those points.
     """
     y = np.asarray(y, dtype=float)
     ok = np.isfinite(y)
@@ -104,6 +104,41 @@ def fill_nan(y: np.ndarray) -> np.ndarray:
     return np.interp(x, x[ok], y[ok])
 
 
+# ---------------------------------------------------------------- continuo
+# (these helpers live here and not in match.py so that library.py can
+#  precompute every candidate's continuum without creating an import cycle)
+def upper_hull(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Upper convex hull (monotone chain) interpolated over x."""
+    pts: list[tuple[float, float]] = []
+    for xi, yi in zip(x, y):
+        pts.append((float(xi), float(yi)))
+        while len(pts) >= 3:
+            (x0, y0), (x1, y1), (x2, y2) = pts[-3:]
+            # cross > 0 -> midpoint below the line = drop it
+            cross = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
+            if cross <= 0:
+                break
+            pts.pop(-2)
+    hx = np.array([p[0] for p in pts])
+    hy = np.array([p[1] for p in pts])
+    return np.interp(x, hx, hy)
+
+
+def continuum_removal(nm: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """R / continuum over the visible range (upper convex hull)."""
+    hull = upper_hull(nm, y)
+    hull = np.where(hull <= 1e-9, np.nan, hull)
+    cr = y / hull
+    if np.isnan(cr).all():
+        return np.ones_like(y)
+    return np.nan_to_num(cr, nan=float(np.nanmean(cr)))
+
+
+def band_depths(cr: np.ndarray) -> np.ndarray:
+    """Band depths (1 - CR) over a fine grid."""
+    return 1.0 - np.asarray(cr, dtype=float)
+
+
 def normalize(y: np.ndarray, mode: str = "max") -> np.ndarray:
     y = np.asarray(y, dtype=float)
     if mode == "none":
@@ -111,22 +146,22 @@ def normalize(y: np.ndarray, mode: str = "max") -> np.ndarray:
     if mode == "max":
         m = np.nanmax(y)
         return y / m if m > 0 else y
-    if mode == "unit":                       # media 0, norma 1 (para SAM)
+    if mode == "unit":                       # mean0, norm1 (for SAM)
         m = np.nanmean(y)
         y = y - m
         n = np.linalg.norm(y)
         return y / n if n > 0 else y
-    raise ValueError("mode debe ser 'none', 'max' o 'unit'")
+    raise ValueError("mode must be 'none', 'max' or 'unit'")
 
 
 def resample(nm: np.ndarray, y: np.ndarray, grid: np.ndarray) -> np.ndarray:
-    """Re-muestrea a `grid` promediando dentro de ±medio paso.
+    """Re-sample onto `grid`, averaging within ±half a step.
 
-    Promediar (y no muestrear un solo píxel) es lo que hace el detector
-    sobre el bin de la rejilla: sin eso el ruido de la cámara pasa entero
-    a la curva y el cruce con la biblioteca se resiente.  Los NaN (lámpara
-    débil) se ignoran dentro del bin; si no queda ningún punto válido el
-    resultado es NaN.
+    Averaging (instead of sampling a single pixel) is what the detector
+    does over the grid bin: without it the camera noise passes straight
+    through into the curve and the crossing against the library suffers.
+    NaN (weak lamp) are ignored inside the bin; if no valid point is
+    left the result is NaN.
     """
     nm = np.asarray(nm, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -149,7 +184,7 @@ def resample(nm: np.ndarray, y: np.ndarray, grid: np.ndarray) -> np.ndarray:
             good = np.isfinite(chunk)
             out[i] = float(np.mean(chunk[good])) if good.any() else np.nan
             continue
-        # fuera del rango de la calibración
+        # outside the calibration range
         out[i] = float(np.interp(g, nm, y, left=np.nan, right=np.nan))
     return out
 
@@ -163,7 +198,7 @@ def resample_mean(nm: np.ndarray, y: np.ndarray, grid: np.ndarray) -> np.ndarray
     out = np.full(grid.shape, np.nan)
     idx = np.clip(np.searchsorted(nm, grid), 0, nm.size - 1)
     for i, (g, j) in enumerate(zip(grid, idx)):
-        # ventana local de ±1 paso de la rejilla
+        # local window of ±1 grid step
         lo = np.searchsorted(nm, g - 1.0)
         hi = np.searchsorted(nm, g + 1.0, side="right")
         if hi <= lo:

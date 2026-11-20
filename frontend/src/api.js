@@ -1,4 +1,4 @@
-/* Cliente de la API del espectrómetro (envía el idioma en cada petición) */
+/* Spectrometer API client (sends the language on every request) */
 let LANG = 'en'
 export function setApiLang(l) { LANG = l }
 
@@ -7,7 +7,7 @@ const withLang = (u) => u + (u.includes('?') ? '&' : '?') + 'lang=' + LANG
 const j = async (r) => {
   if (!r.ok) {
     let msg = `HTTP ${r.status}`
-    try { msg = (await r.json()).detail || msg } catch { /* vacío */ }
+    try { msg = (await r.json()).detail || msg } catch { /* empty */ }
     throw new Error(msg)
   }
   return r.json()

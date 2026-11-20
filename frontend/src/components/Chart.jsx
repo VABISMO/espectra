@@ -1,6 +1,6 @@
-/* Gráfico de líneas SVG con hover, área degradada y leyenda.
+/* SVG line chart with hover, gradient area and legend.
    series: [{ name, color, data:[y], width?, dashed? }]
-   x: [números]  (mismo tamaño que cada data) */
+   x: [numbers]  (same size as each data) */
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const PALETTE = ['#38bdf8', '#a78bfa', '#fb7185', '#fbbf24',
@@ -107,7 +107,7 @@ export default function Chart({
             fontSize="12" fontWeight="600"
             transform={`rotate(-90 14 ${P.t + ih / 2})`}>{yLabel}</text>
         )}
-        {/* área de la muestra */}
+        {/* sample area */}
         {areaFirst && series[0] && (
           <path d={`${path(series[0].data)} L${sx(x.length - 1)},${P.t + ih} L${P.l},${P.t + ih} Z`}
             fill="url(#areaGrad)" />
@@ -152,7 +152,7 @@ export default function Chart({
               <span><span style={{
                 display: 'inline-block', width: 9, height: 9, borderRadius: 3,
                 background: s.color, marginRight: 6,
-              }} />{s.name || (i === 0 ? 'muestra' : '')}</span>
+              }} />{s.name || (i === 0 ? 'sample' : '')}</span>
               <b style={{ fontFamily: 'JetBrains Mono, monospace', color: '#e9eefb' }}>
                 {formatY(s.data[hover])}
               </b>
@@ -160,7 +160,7 @@ export default function Chart({
           ))}
         </div>
       )}
-      {/* leyenda */}
+      {/* legend */}
       {legend.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', marginTop: 10 }}>
           {legend.map((s, i) => (

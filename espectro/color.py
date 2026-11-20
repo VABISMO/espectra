@@ -1,12 +1,12 @@
-"""Colorimetría: reflectancia → color CIE Lab (bajo D65) y distancia ΔE.
+"""Colorimetry: reflectance → CIE Lab color (under D65) and ΔE distance.
 
-Permite comparar el color que "se ve" en el espectro con el de cada
-material de la biblioteca: en el visible (400-700 nm) el color es una
-señal muy discriminante y complementa a las bandas de absorción.
+Compares the color that is "seen" in the spectrum with the color of each
+material in the library: in the visible (400-700 nm) color is a highly
+discriminating signal that complements the absorption bands.
 
-Datos incluidos en `espectro/data/`:
-  * cmf_cie1931_2deg.csv  — funciones de igualación CIE 1931 2º
-  * illuminant_d65.csv    — SPD del iluminante D65
+Bundled data in `espectro/data/`:
+  * cmf_cie1931_2deg.csv  — CIE 1931 2° color matching functions
+  * illuminant_d65.csv    — D65 illuminant SPD
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _load_tables() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
                      comments="#", skiprows=0)
     d65 = np.loadtxt(DATA / "illuminant_d65.csv", delimiter=",",
                      comments="#", skiprows=0)
-    # los comentarios '#' los maneja skiprows de np.loadtxt con comments=
+    # '#' comments are handled by np.loadtxt's skiprows/comments=
     return (cmf[:, 0], cmf[:, 1:4], d65[:, 0], d65[:, 1])
 
 
@@ -38,17 +38,17 @@ def _integrate(wl_cmf: np.ndarray, values: np.ndarray, wl: np.ndarray,
 
 
 def lab_of_spectrum(nm: np.ndarray, reflectance: np.ndarray) -> tuple[float, float, float]:
-    """Color CIE L*a*b* (D65) de una reflectancia relativa."""
+    """CIE L*a*b* color (D65) of a relative reflectance spectrum."""
     cmf_wl, cmf, d65_wl, spd = _load_tables()
-    # rejilla común 380-780 nm
+    # common grid380-780 nm
     grid = cmf_wl[(cmf_wl >= 380) & (cmf_wl <= 780)]
     xbar, ybar, zbar = (np.interp(grid, cmf_wl, cmf[:, i])
                         for i in range(3))
     s = np.interp(grid, d65_wl, spd, left=0.0, right=0.0)
     r = np.interp(grid, nm, reflectance, left=np.nan, right=np.nan)
-    # huecos (lámpara débil / fuera de rango): interpolamos entre los
-    # puntos válidos; rellenar con 0 inventaría una ausencia total de
-    # reflectancia en esa banda y desplazaría el color.
+    # gaps (weak lamp / out of range): interpolate between the valid
+    # points; filling with 0 would invent a total absence of reflectance
+    # in that band and shift the color.
     ok = np.isfinite(r)
     if ok.sum() >= 2:
         gx = np.arange(r.size, dtype=float)
@@ -80,7 +80,7 @@ def delta_e(lab1: tuple[float, float, float],
 
 
 def lab_to_hex(lab: tuple[float, float, float]) -> str:
-    """Convierte Lab → color sRGB '#rrggbb' (aproximado, para mostrar)."""
+    """Convert Lab → sRGB colour '#rrggbb' (approximated, for display)."""
     L, a, b = lab
 
     def finv(t: float) -> float:

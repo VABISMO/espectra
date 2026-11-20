@@ -1,40 +1,40 @@
-# ESPECTRA — comandos habituales
+# ESPECTRA — common commands
 PY := .venv/bin/python
 PIP := .venv/bin/pip
 
 .PHONY: install install-libs run dev build test demo bench lint fmt clean
 
-install:            ## crear venv + dependencias + compilar interfaz
+install:            ## create venv + deps + build the frontend
 	./install.sh
 
-install-libs:       ## instalar y descargar bibliotecas de materiales
+install-libs:       ## install and download the material libraries
 	./install.sh --libs
 
-run:                ## arrancar el servidor → http://localhost:8000
+run:                ## start the server → http://localhost:8000
 	$(PY) server.py
 
-dev:                ## servidor con recarga automática
-	$(PY) -m uvicorn server:app --reload --port 8000
+dev:                ## server with automatic reload
+	$(PY) -m uvicorn server --reload --port 8000
 
-build:              ## compilar el frontend React
+build:              ## build the React frontend
 	cd frontend && npm run build
 
-test:               ## tests end-to-end (motor + API + cámara)
+test:               ## end-to-end tests (engine + API + camera)
 	$(PY) tests/run_tests.py
 
-demo:               ## análisis sintético completo → PASS
+demo:               ## full synthetic analysis → PASS
 	$(PY) -m espectro demo
 
-bench:              ## validación LOO: top-1/top-3 + falsos positivos
+bench:              ## LOO validation: top-1/top-3 + false positives
 	$(PY) scripts/benchmark.py --n 200 --negatives 40 --sweep
 
-lint:               ## revisión estática
+lint:               ## static checks
 	$(PIP) install -q ruff
 	.venv/bin/ruff check --select F,E9 espectro scripts server.py tests
 
-fmt:                ## formato automático
+fmt:                ## automatic formatting
 	.venv/bin/ruff check --fix --select I,RUF100,F401 espectro scripts server.py tests || true
 
-clean:              ## artefactos generados
-	rm -rf frontend/dist data/examples resultados .ruff_cache
+clean:              ## generated artefacts
+	rm -rf frontend/dist data/examples results .ruff_cache
 	find . -name __pycache__ -type d -not -path "./.venv/*" -exec rm -rf {} +

@@ -1,6 +1,6 @@
 /* Contexto de idioma: EN (default) / ES — persistido en localStorage */
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { translate } from './i18n.js'
+import { categoryLabel, translate } from './i18n.js'
 import { setApiLang } from './api.js'
 
 const Ctx = createContext(null)
@@ -17,7 +17,8 @@ export function LangProvider({ children }) {
   }, [lang])
 
   const t = useCallback((k, v) => translate(lang, k, v), [lang])
-  return <Ctx.Provider value={{ lang, setLang, t }}>{children}</Ctx.Provider>
+  const cat = useCallback((c) => categoryLabel(lang, c), [lang])
+  return <Ctx.Provider value={{ lang, setLang, t, cat }}>{children}</Ctx.Provider>
 }
 
 export function useLang() {

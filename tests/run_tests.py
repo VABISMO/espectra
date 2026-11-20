@@ -1,4 +1,4 @@
-"""Pruebas end-to-end del espectrómetro (sin pytest: `python tests/run_tests.py`)."""
+"""End-to-end tests of the spectrometer (no pytest: `python tests/run_tests.py`)."""
 from __future__ import annotations
 
 import sys
@@ -8,9 +8,27 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 FAILS: list[str] = []
+CHECKS = 0        # mandatory checks (always executed)
+CHECKS_OPT = 0    # environment dependent (USB camera, opencv)
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
+    global CHECKS
+    CHECKS += 1
+    _report(name, cond, detail)
+
+
+def check_opt(name: str, cond: bool, detail: str = "") -> None:
+    """Like `check`, but for checks that do not exist in every
+    environment (no USB camera / no opencv). They do not count towards
+    the count the README publishes, which is why it stays stable in CI.
+    """
+    global CHECKS_OPT
+    CHECKS_OPT += 1
+    _report(name, cond, detail)
+
+
+def _report(name: str, cond: bool, detail: str) -> None:
     print(("  PASS  " if cond else "  FAIL  ") + name +
           (f"  [{detail}]" if detail and not cond else ""))
     if not cond:
@@ -19,15 +37,15 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 # ---------------------------------------------------------------- 1. demo
 def test_demo() -> None:
-    print("\n1) demo end-to-end (LED + biblioteca + color)")
+    print("\n1) demo end-to-end (LED + library + colour)")
     from espectro.cli import main
     rc = main(["demo"])
     check("demo PASS", rc == 0, f"rc={rc}")
 
 
-# ------------------------------------------------------- 2. calibración LED
+# ------------------------------------------------------- 2. LED calibration
 def test_led_calibration() -> None:
-    print("\n2) calibración automática por picos de LED")
+    print("\n2) automatic calibration from LED peaks")
     import numpy as np
 
     from espectro import calib as cal
@@ -36,18 +54,18 @@ def test_led_calibration() -> None:
     true_nm = 400.0 + p / (W - 1) * 300.0
     lamp = cal.led_model(true_nm)
     peaks = cal.detect_led_peaks(p, lamp)
-    check("detecta dos picos", peaks is not None)
+    check("detects two peaks", peaks is not None)
     if peaks:
         coeffs = cal.poly_from_anchors([(peaks[0], 450.0), (peaks[1], 560.0)])
         coeffs, r = cal.refine_led(coeffs, p, lamp)
         err = float(np.max(np.abs(np.polyval(coeffs, p) - true_nm)))
-        check("error máximo < 5 nm", err < 5.0, f"err={err:.1f} nm")
-        check("correlación > 0.999", r > 0.999, f"r={r:.4f}")
+        check("maximum error < 5 nm", err < 5.0, f"err={err:.1f} nm")
+        check("correlation > 0.999", r > 0.999, f"r={r:.4f}")
 
 
-# ------------------------------------- 3. máscara de lámpara + gamma
+# ------------------------------------- 3. lamp mask + gamma
 def test_reflectance_mask() -> None:
-    print("\n3) pseudo-reflectancia: máscara de lámpara y gamma")
+    print("\n3) pseudo-reflectance: lamp mask and gamma")
     import numpy as np
 
     from espectro import match as mtc
@@ -55,61 +73,61 @@ def test_reflectance_mask() -> None:
     from espectro.library import Spectrum
     from espectro.reflectance import fill_nan, linearize, pseudo_reflectance
 
-    # --- donde la bombilla no llega, NaN (nunca cero)
+    # --- where the bulb does not reach, NaN (never zero)
     n = 240
     lamp = np.ones(n)
     lamp[:30] = 0.0                 # cola azul
     lamp[200:] = 0.0                # >680 nm: el LED no emite
     r = pseudo_reflectance(0.4 * lamp, lamp, smooth=1, floor_frac=0.03)
-    check("zona sin lámpara = NaN",
+    check("lamp-less zone = NaN",
           bool(np.isnan(r[:30]).all() and np.isnan(r[200:]).all()))
-    check("zona válida = reflectancia real",
+    check("valid zone = true reflectance",
           abs(float(np.nanmedian(r[60:150])) - 0.4) < 1e-9, str(r[100]))
-    check("sin ceros artificiales en el rojo", bool(not (r[200:] == 0).any()))
+    check("no artificial zeros in the red", bool(not (r[200:] == 0).any()))
 
-    # --- linealización gamma
+    # --- gamma linearization
     x = np.array([0.0, 63.75, 127.5, 255.0])
-    check("gamma=1 es identidad", bool(np.allclose(linearize(x, 1.0), x)))
+    check("gamma=1 is the identity", bool(np.allclose(linearize(x, 1.0), x)))
     lin = linearize(x, 2.2, 255.0)
-    check("linealiza gamma 2.2",
+    check("linearizes gamma 2.2",
           bool(lin[1] > x[1] and abs(lin[3] - 255.0) < 1e-9), str(lin[1]))
 
-    # dividir con gamma aplicada recupera la reflectancia verdadera
+    # dividing after linearizing recovers the true reflectance
     true_r = 0.4
-    s_enc = np.array([(true_r ** 2.2) * 255.0])     # lo que codifica la cámara
+    s_enc = np.array([(true_r ** 2.2) * 255.0])     # what the camera encodes
     l_enc = np.array([255.0])
     got = pseudo_reflectance(s_enc, l_enc, smooth=1, gamma=2.2,
                              full_scale=255.0)
-    check("divide tras linealizar", abs(float(got[0]) - true_r) < 1e-9,
+    check("divides after linearizing", abs(float(got[0]) - true_r) < 1e-9,
           f"{float(got[0]):.4f}")
     got_off = pseudo_reflectance(s_enc, l_enc, smooth=1, gamma=1.0,
                                  full_scale=255.0)
-    check("sin linealizar comprime la banda",
+    check("without linearizing the band is compressed",
           float(got_off[0]) < true_r - 0.1, f"{float(got_off[0]):.4f}")
 
-    # --- match() descarta los NaN en lugar de tratarlos como cero
+    # --- match() drops NaN instead of treating them as zero
     grid = np.arange(400.0, 700.0 + 1e-9, 5.0)
     y1 = 0.2 + 0.6 * np.exp(-0.5 * ((grid - 500.0) / 40.0) ** 2)
     y2 = 0.2 + 0.6 * np.exp(-0.5 * ((grid - 620.0) / 40.0) ** 2)
     pairs = [(Spectrum("banda500", grid, y1), y1),
              (Spectrum("banda620", grid, y2), y2)]
     s = y1.copy()
-    s[grid >= 660.0] = np.nan      # zona sin lámpara
+    s[grid >= 660.0] = np.nan      # lamp-less zone
     res = mtc.match(grid, s, pairs, grid, top=2)
-    check("match con NaN devuelve candidatos", len(res) == 2, str(len(res)))
-    check("scores finitos",
+    check("match with NaN returns candidates", len(res) == 2, str(len(res)))
+    check("finite scores",
           bool(res and all(np.isfinite(m.score) for m in res)))
-    check("la zona sin lámpara no decide el ganador",
+    check("the lamp-less zone does not decide the winner",
           bool(res and res[0].spectrum.name == "banda500"),
           res[0].spectrum.name if res else "sin resultados")
-    check("fill_nan sin huecos", bool(np.isfinite(fill_nan(s)).all()))
-    check("color sin NaN",
+    check("fill_nan leaves no gaps", bool(np.isfinite(fill_nan(s)).all()))
+    check("colour with no NaN",
           bool(np.isfinite(lab_of_spectrum(grid, s)).all()))
 
 
-# ------------------------------------------------------- 4. veredicto
+# ------------------------------------------------------- 4. verdict
 def test_verdict() -> None:
-    print("\n4) veredicto: identified / uncertain / unknown")
+    print("\n4) verdict: identified / uncertain / unknown")
     import numpy as np
 
     from espectro import match as mtc
@@ -123,33 +141,33 @@ def test_verdict() -> None:
            (Spectrum("Beta s1", grid, g(620)), g(620)),
            (Spectrum("Gamma s1", grid, ramp), ramp)]
 
-    # 1. un miembro real de la biblioteca -> identified (aunque el 2º sea
+    # 1. a real library member -> identified (even if the 2nd is
     #    de la MISMA familia: el margen se mide contra otra familia)
     y = g(451.5)
     out = mtc.match(grid, y, lib, grid, top=4)
-    check("miembro real -> identified",
+    check("real member -> identified",
           out.verdict.label == "identified", str(out.verdict))
-    check("el margen salta la familia empatada",
+    check("the margin skips the tied family",
           out.verdict.margin > mtc.VERDICT_MIN_MARGIN, str(out.verdict.margin))
 
-    # 2. muestra plana -> sin candidatos (Pearson indefinido) -> unknown
+    # 2. flat sample -> no candidates (Pearson undefined) -> unknown
     out2 = mtc.match(grid, np.full(grid.size, 0.5), lib, grid, top=4)
     check("plano -> unknown", out2.verdict.label == "unknown", str(len(out2)))
 
-    # 3. mezcla de dos familias lejanas: nunca se identifica con confianza
+    # 3. mix of two distant families: never confidently identified
     out3 = mtc.match(grid, 0.5 * (g(450) + g(620)), lib, grid, top=4)
-    check("mezcla ambigua no se identifica",
+    check("ambiguous mix is not identified",
           out3.verdict.label in ("uncertain", "unknown"), str(out3.verdict))
 
-    # 3b. dos familias DISTINTAS con prácticamente el mismo espectro
-    #     (el caso real de calcita vs cuarzo) -> uncertain, no identified
+    # 3b. two DIFFERENT families with practically the same spectrum
+    #     (the real calcite vs quartz case) -> uncertain, not identified
     ramp = 0.15 + 0.6 * (grid - 400.0) / 300.0
     twin = np.clip(ramp + 0.002, 0.0, 1.0)
     lib2 = [(Spectrum("Beta s1", grid, ramp), ramp),
             (Spectrum("Gamma s1", grid, twin), twin),
             (Spectrum("Alpha s1", grid, g(450)), g(450))]
     out4 = mtc.match(grid, ramp, lib2, grid, top=3)
-    check("espectros gemelos de otra familia -> uncertain",
+    check("twin spectra from another family -> uncertain",
           out4.verdict.label == "uncertain", str(out4.verdict))
 
     # 4. reglas de corte, en aislamiento
@@ -157,31 +175,31 @@ def test_verdict() -> None:
         return mtc.MatchResult(Spectrum(name, grid, y), score=s,
                                sam_deg=0.0, r_raw=s, r_continuum=s,
                                max_depth_diff=0.0)
-    check("sin candidatos -> unknown",
+    check("no candidates -> unknown",
           mtc.assess([]).label == "unknown")
-    check("score bajo -> unknown",
+    check("low score -> unknown",
           mtc.assess([mk(0.55)]).label == "unknown")
-    check("margen estrecho -> uncertain",
+    check("narrow margin -> uncertain",
           mtc.assess([mk(0.80), mk(0.79, "Z w")]).label == "uncertain")
-    check("score y margen suficientes -> identified",
+    check("enough score and margin -> identified",
           mtc.assess([mk(0.85), mk(0.70, "Z w")]).label == "identified")
     d = mtc.assess([mk(0.85), mk(0.70)]).as_dict()
-    check("veredicto serializable a JSON",
+    check("verdict serializable to JSON",
           all(isinstance(v, (int, float, str)) for v in d.values()))
-    check("MatchOutcome sigue siendo una lista",
+    check("MatchOutcome is still a list",
           isinstance(out, list) and len(out) == 4)
 
 
 # ------------------------------------------------------------ 5. API REST
 def test_api() -> None:
-    print("\n5) API (FastAPI TestClient): estado, calibración, análisis")
+    print("\n5) API (FastAPI TestClient): status, calibration, analysis")
     from fastapi.testclient import TestClient
 
     import server
 
     ex = ROOT / "data" / "examples"
     cal_path = ROOT / "data" / "calibration" / "cal.json"
-    if not (ex / "demo_muestra.png").exists():
+    if not (ex / "demo_sample.png").exists():
         check("fotos de ejemplo", False, "ejecuta demo antes")
         return
 
@@ -191,51 +209,51 @@ def test_api() -> None:
     r = client.get("/api/status")
     check("GET /api/status", r.status_code == 200)
     st = r.json()
-    check("biblioteca cargada", st["library"]["total"] > 500,
+    check("library loaded", st["library"]["total"] > 500,
           str(st["library"]["total"]))
     if st["cameras"]:
-        check("cámara detectada", len(st["cameras"]) >= 1)
+        check_opt("camera detected", len(st["cameras"]) >= 1)
     else:
-        print("  (sin cámaras en este entorno — se omite; CI no tiene V4L2)")
+        print("  (no cameras in this environment — skipped; CI has no V4L2)")
 
     # --- frontend servido
     r = client.get("/")
     check("GET / (React)", r.status_code == 200 and "ESPECTRA" in r.text)
 
-    # --- inyecta las fotos del demo como si las hubiera capturado la cámara
-    for slot, name in (("sample", "demo_muestra.png"),
-                       ("lamp", "demo_bombilla.png"),
-                       ("cal", "demo_bombilla.png")):
+    # --- inject the demo photos as if the camera had captured them
+    for slot, name in (("sample", "demo_sample.png"),
+                       ("lamp", "demo_lamp.png"),
+                       ("cal", "demo_lamp.png")):
         server.STATE["slots"][slot] = (ex / name).read_bytes()
 
-    # --- calibración por la API (modo LED)
+    # --- calibration through the API (LED mode)
     if cal_path.exists():
         cal_path.unlink()
-    # el modo automático (por defecto) tiene que rechazar un LED blanco
-    # y caer en el modo LED, no inventarse líneas de mercurio
+    # the automatic mode (default) must reject a white LED
+    # and fall back to LED mode instead of inventing mercury lines
     r0 = client.post("/api/calibrate", json={"method": "auto"})
     check("POST /api/calibrate (auto)", r0.status_code == 200, r0.text[:200])
     if r0.status_code == 200:
-        check("auto no confunde un LED con líneas Hg",
+        check("auto does not mistake an LED for Hg lines",
               r0.json()["meta"]["mode"] == "led",
               str(r0.json()["meta"].get("mode")))
     r = client.post("/api/calibrate", json={"method": "led"})
     check("POST /api/calibrate", r.status_code == 200, r.text[:200])
     if r.status_code == 200:
         data = r.json()
-        check("calibración modo led", data["meta"]["mode"] == "led")
-        check("picos detectados", bool(data["meta"].get("led_peaks_pixel")))
-        check("ajuste r > 0.99",
+        check("LED mode calibration", data["meta"]["mode"] == "led")
+        check("peaks detected", bool(data["meta"].get("led_peaks_pixel")))
+        check("fit r > 0.99",
               float(data["meta"].get("led_corr") or 0) > 0.99,
               str(data["meta"].get("led_corr")))
-        check("guardado en cal.json", cal_path.exists())
+        check("saved to cal.json", cal_path.exists())
         check("preview_b64", bool(data.get("preview_b64")))
 
     r = client.get("/api/calibration/preview")
-    check("GET preview calibración", r.status_code == 200
+    check("GET calibration preview", r.status_code == 200
           and r.headers["content-type"] == "image/png")
 
-    # --- análisis
+    # --- analysis
     r = client.post("/api/analyze", json={
         "slot": "sample", "axis": "auto", "channel": "sum",
         "smooth": 5, "frac": 0.25, "rows": None, "top": 10})
@@ -243,66 +261,66 @@ def test_api() -> None:
     if r.status_code == 200:
         a = r.json()
         res = a["results"]
-        check("devuelve resultados", len(res) >= 3, str(len(res)))
-        check("mejor candidato azurita",
+        check("returns results", len(res) >= 3, str(len(res)))
+        check("best candidate azurite",
               "azurite" in res[0]["name"].lower(), res[0]["name"])
-        check("con referencia LED", a["has_lamp"] is True)
-        check("color de muestra", a["sample_color"].startswith("#"))
-        check("curvas candidato", len(res[0]["curve"]) == len(a["curve"]["nm"]))
-        check("continuo candidato", len(res[0]["continuum"]) == 61)
-        check("banda extraída", a["rows"][1] > a["rows"][0])
+        check("with LED reference", a["has_lamp"] is True)
+        check("sample colour", a["sample_color"].startswith("#"))
+        check("candidate curves", len(res[0]["curve"]) == len(a["curve"]["nm"]))
+        check("candidate continuum", len(res[0]["continuum"]) == 61)
+        check("band extracted", a["rows"][1] > a["rows"][0])
         import math
         nums = ([res[0][k] for k in
                  ("score", "delta_e", "sam_deg", "r_raw", "r_continuum")]
                 + a["curve"]["reflectance"] + a["continuum"])
-        check("JSON sin NaN", all(
+        check("JSON without NaN", all(
             isinstance(v, (int, float)) and math.isfinite(v) for v in nums))
-        check("cobertura de banda",
+        check("band coverage",
               0.0 < float(a.get("coverage", 0)) <= 1.0,
               str(a.get("coverage")))
-        check("gamma en la respuesta", a.get("gamma") == 1.0,
+        check("gamma in the response", a.get("gamma") == 1.0,
               str(a.get("gamma")))
-        check("veredicto identified",
+        check("verdict identified",
               a.get("verdict", {}).get("label") == "identified",
               str(a.get("verdict")))
-        check("fwhm de referencias en la respuesta", a.get("fwhm") == 7.0,
+        check("reference fwhm in the response", a.get("fwhm") == 7.0,
               str(a.get("fwhm")))
 
-        # la linealización gamma no rompe el pipeline
+        # gamma linearization does not break the pipeline
         r2 = client.post("/api/analyze", json={
             "slot": "sample", "axis": "auto", "channel": "sum",
             "smooth": 5, "frac": 0.25, "rows": None, "top": 5,
             "gamma": 2.2})
-        check("analyze con gamma 2.2", r2.status_code == 200, r2.text[:200])
+        check("analyze with gamma 2.2", r2.status_code == 200, r2.text[:200])
 
-    # --- subida de foto (alternativa cuando no hay cámara)
-    png = (ex / "demo_muestra.png").read_bytes()
+    # --- photo upload (camera alternative)
+    png = (ex / "demo_sample.png").read_bytes()
     r = client.post("/api/frame/sample",
-                    files={"file": ("muestra.png", png, "image/png")})
-    check("POST /api/frame (subida)", r.status_code == 200, r.text[:120])
-    check("foto subida en la ranura",
+                    files={"file": ("sample.png", png, "image/png")})
+    check("POST /api/frame (upload)", r.status_code == 200, r.text[:120])
+    check("photo uploaded into the slot",
           client.get("/api/status").json()["slots"]["sample"] is True)
 
     # --- ranuras / borrado
     r = client.delete("/api/frame/sample")
     check("DELETE frame", r.status_code == 200)
-    check("ranura borrada",
+    check("slot cleared",
           client.get("/api/status").json()["slots"]["sample"] is False)
 
 
-# --------------------------------------------------------------- 6. cámara
+# --------------------------------------------------------------- 6. camera
 def test_camera() -> None:
-    print("\n6) cámara USB (V4L2/OpenCV)")
+    print("\n6) USB camera (V4L2/OpenCV)")
     from espectro import camara as cam
     try:
         cams = cam.probe_cameras()
     except RuntimeError as e:
-        check("opencv disponible", False, str(e))
+        check_opt("opencv disponible", False, str(e))
         return
     if not cams:
-        print("  (sin cámaras — se omite)")
+        print("  (no cameras — skipped)")
         return
-    check("detecta cámaras", len(cams) >= 1, "0 cámaras")
+    check_opt("detects cameras", len(cams) >= 1, "0 cameras")
     ok_any = False
     for c in cams:                       # algunas pueden estar ocupadas
         try:
@@ -314,12 +332,12 @@ def test_camera() -> None:
                 break
         except Exception:                 # noqa: BLE001
             continue
-    check("captura un frame RGB", ok_any, "todas ocupadas o ilegibles")
+    check_opt("captures an RGB frame", ok_any, "all busy or unreadable")
 
 
-# ------------------------------------------------- 7. líneas de mercurio
+# ------------------------------------------------- 7. mercury lines
 def test_hg_lines() -> None:
-    print("\n7) calibración por líneas de mercurio/CFL")
+    print("\n7) calibration from mercury/CFL lines")
     import numpy as np
 
     from espectro import calib as cal
@@ -328,51 +346,146 @@ def test_hg_lines() -> None:
     p = np.arange(W, dtype=float)
     true_nm = 400.0 + p / (W - 1) * 300.0
 
-    # lámpara de mercurio: líneas vistas con el instrumento (7 nm FWHM)
+    # mercury lamp: lines as seen through the instrument (7 nm FWHM)
     sig = cal.hg_model(true_nm, sigma=7.0 / 2.35482)
     sig = sig / sig.max()
 
     peaks = cal.detect_narrow_peaks(p, sig)
-    check("detecta los picos estrechos", len(peaks) >= 3, str(len(peaks)))
+    check("detects the narrow peaks", len(peaks) >= 3, str(len(peaks)))
     fit = cal.fit_hg_lines(p, sig, min_lines=3)
-    check("encuentra el ajuste por líneas", fit is not None)
+    check("finds the line fit", fit is not None)
     if fit:
         coeffs, meta = fit
         err = float(np.max(np.abs(np.polyval(coeffs, p) - true_nm)))
-        check("error < 2 nm con líneas Hg", err < 2.0, f"err={err:.2f} nm")
-        check("≥3 líneas explicadas", meta["lines_explained"] >= 3,
+        check("error < 2 nm with Hg lines", err < 2.0, f"err={err:.2f} nm")
+        check("≥3 lines explained", meta["lines_explained"] >= 3,
               str(meta["lines_explained"]))
+        # resolution is NOT assumed: it is measured from the line width
+        check("measures the FWHM (7 nm true)",
+              6.0 <= float(meta.get("fwhm_nm") or 0) <= 8.0,
+              str(meta.get("fwhm_nm")))
 
-    # solo dos líneas visibles (435,8 / 546,1): el modo automático las
-    # rechaza (no puede validarse), pero `--lines` las acepta
+    # with another resolution it must return a DIFFERENT number (otherwise
+    # it would be a fixed value disguised as a measurement)
+    sig10 = cal.hg_model(true_nm, sigma=10.0 / 2.35482)
+    sig10 = sig10 / sig10.max()
+    fit10 = cal.fit_hg_lines(p, sig10, min_lines=3)
+    check("resolution is measured, not fixed",
+          fit10 is not None
+          and 9.0 <= float(fit10[1].get("fwhm_nm") or 0) <= 11.0,
+          str(fit10[1].get("fwhm_nm")) if fit10 else "no fit")
+
+    # only two visible lines (435.8 / 546.1): the automatic mode rejects
+    # them (it cannot validate them), but `--lines` accepts them
     two = np.zeros_like(true_nm)
     for c in (435.83, 546.07):
         two = two + np.exp(-0.5 * ((true_nm - c) / (7.0 / 2.35482)) ** 2)
     two = two / two.max()
-    check("dos picos: el automático no se arriesga",
+    check("two peaks: the automatic mode does not risk it",
           cal.fit_hg_lines(p, two, min_lines=3) is None)
     fit2 = cal.fit_hg_lines(p, two, min_lines=2, allow_pair=True)
-    check("dos picos: `--lines` asume el par clásico", fit2 is not None)
+    check("two peaks: `--lines` assumes the classic pair", fit2 is not None)
     if fit2:
         c2, m2 = fit2
         e2 = float(np.max(np.abs(np.polyval(c2, p) - true_nm)))
         pk2 = cal.detect_narrow_peaks(p, two)
         used_nm = sorted(d["nm"] for d in m2["lines"])
-        check("par clásico con error < 2 nm", e2 < 2.0,
+        check("classic pair with error < 2 nm", e2 < 2.0,
               f"err={e2:.2f} nm · picos={[round(q, 1) for q, _ in pk2]} · "
               f"usadas={[(d['pixel'], d['nm']) for d in m2['lines']]} · "
               f"c2={np.array2string(c2, precision=4)}")
-        check("elige el par 435,8/546,1 y no otro",
+        check("picks the 435.8/546.1 pair and no other",
               used_nm == [435.83, 546.07], str(used_nm))
-        check("avisa de que asume el par", m2["lines_classic_pair"])
+        check("warns that it assumes the pair", m2["lines_classic_pair"])
 
-    # un LED blanco (pico ancho + hump) NO puede colarse como líneas
+    # a white LED (broad peak + hump) cannot pass for lines
     led = cal.led_model(true_nm)
     led = led / led.max()
-    check("el LED blanco no se toma por líneas",
+    check("the white LED is not taken for lines",
           cal.fit_hg_lines(p, led, min_lines=3) is None)
-    check("el LED no tiene picos estrechos",
+    check("the LED has no narrow peaks",
           len(cal.detect_narrow_peaks(p, led)) < 2)
+
+
+# ------------------------------------------- 8. shared pipeline
+def test_pipeline() -> None:
+    print("\n8) shared pipeline (REST API + Streamlit)")
+    import numpy as np
+
+    from espectro import library as lib
+    from espectro import pipeline as pl
+    from espectro.calib import led_model
+
+    grid = pl.GRID
+    W = 1280
+    p = np.arange(W, dtype=float)
+    true_nm = 400.0 + p / (W - 1) * 300.0
+    coeffs = np.polyfit(p, true_nm, 1)
+
+    R = 0.2 + 0.6 * np.exp(-0.5 * ((true_nm - 500.0) / 40.0) ** 2)
+    spec = lib.Spectrum("Synthetic sample", grid,
+                        0.2 + 0.6 * np.exp(-0.5 * ((grid - 500.0) / 40.0) ** 2))
+    paired = lib.to_grid([spec], grid, fwhm=None)
+
+    lamp = led_model(true_nm)
+    # real sensor roll-off in the red: without it the idealised LED never
+    # drops below3 % and the mask is never exercised
+    lamp = lamp * np.clip((690.0 - true_nm) / 20.0, 0.0, 1.0)
+    lamp = lamp / lamp.max() * 220.0          # in DN, like a photo
+    sample = lamp * R
+
+    an = pl.analyze(sample, lamp, p, coeffs, paired, smooth=5, top=3)
+    check("analyzes with lamp", an.has_lamp is True)
+    check("partial coverage (LED tail masked)",
+          0.5 < an.coverage < 1.0, f"{an.coverage:.2f}")
+    check("the sample keeps the mask's NaN",
+          bool(np.isnan(an.y).any()))
+    check("y_show without NaN (for charts/JSON)",
+          bool(np.isfinite(an.y_show).all()))
+    check("returns results with a verdict",
+          len(an.results) > 0 and an.results.verdict.label in
+          ("identified", "uncertain", "unknown"), str(an.results.verdict))
+    check("colour in hex", an.color.startswith("#"), an.color)
+    check("candidate curves",
+          len(pl.curves_of(an.results, paired)) == len(an.results))
+
+    an2 = pl.analyze(sample, None, p, coeffs, paired, smooth=5, top=3)
+    check("analyzes without lamp", an2.has_lamp is False)
+
+    try:
+        pl.analyze(sample, lamp, p, coeffs, paired, min_coverage=1.5)
+        check("raises LowCoverage", False, "did not raise")
+    except pl.LowCoverage as e:
+        check("raises LowCoverage when coverage is insufficient",
+              e.covered < int(e.min_coverage * e.total) and e.total > 0,
+              f"{e.covered}/{e.total} minimum {e.min_coverage}")
+
+
+def verify_readme() -> None:
+    """The count published in the README must match the **mandatory**
+    checks.
+
+    Camera checks do not count: they do not exist in CI nor on a machine
+    without a webcam. Without this check the README number was manual
+    work that had to be touched three times in a single session.
+    """
+    import re
+
+    pats = (r"\*\*(\d+) end-to-end tests\*\*",
+            r"# (\d+) checks:",
+            r"The (\d+) checks")
+    nums: set[int] = set()
+    path = ROOT / "README.md"
+    if path.exists():
+        txt = path.read_text(encoding="utf-8")
+        for pat in pats:
+            nums.update(int(m) for m in re.findall(pat, txt))
+    ok = bool(nums) and nums == {CHECKS}
+    print(("  PASS  " if ok else "  FAIL  ") +
+          f"README: published count {sorted(nums)} == {CHECKS} mandatory"
+          + (f" (+{CHECKS_OPT} camera-only)" if CHECKS_OPT else ""))
+    if not ok:
+        FAILS.append("README test count")
 
 
 if __name__ == "__main__":
@@ -383,5 +496,7 @@ if __name__ == "__main__":
     test_api()
     test_camera()
     test_hg_lines()
+    test_pipeline()
+    verify_readme()
     print("\n" + ("TODO OK ✅" if not FAILS else f"FALLOS: {FAILS}"))
     sys.exit(1 if FAILS else 0)

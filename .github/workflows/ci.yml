@@ -34,19 +34,19 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
-      - name: Lint (errores reales)
+      - name: Lint (real errors only)
         run: ruff check --select F,E9 espectro scripts server.py tests
 
-      - name: Demo end-to-end (motor + calibración LED + biblioteca)
+      - name: Demo end-to-end (engine + LED calibration + library)
         run: python -m espectro demo
 
-      - name: Tests (motor + API + cámara)
+      - name: Tests (engine + API + camera)
         run: python tests/run_tests.py
 
-      - name: Benchmark LOO (validación sintética del pipeline)
+      - name: Benchmark LOO (synthetic pipeline validation)
         run: python scripts/benchmark.py --n 40 --negatives 8
 
-      - name: La interfaz se sirve
+      - name: The frontend is served
         run: |
           python - <<'PY'
           from fastapi.testclient import TestClient

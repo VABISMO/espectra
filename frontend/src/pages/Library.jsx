@@ -1,5 +1,5 @@
-/* Página Bibliotecas: buscador con autocompletado + ficha del material,
-   estadísticas, descargas y subida de CSV */
+/* Libraries page: autocomplete search + material card,
+   stats, downloads and CSV upload */
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import Chart from '../components/Chart.jsx'
@@ -12,7 +12,7 @@ const COLLECTIONS = [
 ]
 
 export default function Library({ status, refresh }) {
-  const { t } = useLang()
+  const { t, cat } = useLang()
   const [lib, setLib] = useState(null)
   const [error, setError] = useState(null)
   const [msg, setMsg] = useState(null)
@@ -127,7 +127,7 @@ export default function Library({ status, refresh }) {
                   onMouseEnter={() => setHi(i)}
                   onMouseDown={(e) => { e.preventDefault(); choose(r.name) }}>
                   <span>{r.name}</span>
-                  <span className="cat">{r.category || '—'}</span>
+                  <span className="cat">{cat(r.category) || '—'}</span>
                 </div>
               ))}
             </div>
@@ -166,7 +166,7 @@ export default function Library({ status, refresh }) {
                 <div className="kicker">{t('lib.spectrum')}</div>
                 <h2 style={{ fontSize: 23 }}>{detail.name}</h2>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                  <span className="chip">{detail.category || t('an.noCategory')}</span>
+                  <span className="chip">{cat(detail.category) || t('an.noCategory')}</span>
                   <span className="chip info">{detail.source}</span>
                   <span className="chip violet">
                     {t('lib.detail.points', { n: detail.stats.points })}
@@ -219,7 +219,7 @@ export default function Library({ status, refresh }) {
         )}
       </div>
 
-      {/* ---------- estadísticas */}
+      {/* ---------- stats */}
       <div className="row c3" style={{ marginBottom: 18 }}>
         <div className="card" style={{ marginBottom: 0 }}>
           <div className="stat"><b>{total}</b><span>{t('lib.spectra')}</span></div>
@@ -234,7 +234,7 @@ export default function Library({ status, refresh }) {
         </div>
       </div>
 
-      {/* ---------- composición */}
+      {/* ---------- composition */}
       <div className="card">
         <div className="kicker">{t('lib.composition')}</div>
         <h2>{t('lib.byCategory')}</h2>

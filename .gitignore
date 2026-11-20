@@ -8,7 +8,7 @@ __pycache__/
 data/examples/
 data/calibration/
 data/raw/
-resultados/
+results/
 
 # frontend
 frontend/node_modules/

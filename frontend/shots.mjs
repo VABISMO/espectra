@@ -1,5 +1,5 @@
-/* Captura las pantallas de la interfaz para revisión visual.
-   W/H = viewport; añade detalle del buscador y cambio a ES. */
+/* Captures the UI screenshots for visual review.
+   W/H = viewport; adds search detail and switches to ES. */
 import { chromium } from 'playwright'
 
 const pages = ['Analyze', 'Calibration', 'Libraries', 'Guide']

@@ -26,7 +26,7 @@ function Shell() {
       .catch((e) => setErr(e.message))
   }, [])
 
-  useEffect(() => { refresh(true) }, [refresh])   // sondeo de cámaras al cargar
+  useEffect(() => { refresh(true) }, [refresh])   // camera probe on load
 
   const calMode = status?.calibration?.mode
   const calLabel = calMode ? t(`mode.${calMode}`) : null

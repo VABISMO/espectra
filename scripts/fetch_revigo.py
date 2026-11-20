@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Descarga la biblioteca de pinturas del proyecto Revigo (CC0).
+"""Download the Revigo project paint library (CC0).
 
-Mezclas de pigmentos históricos (Eosin, Cochineal, Minium, bermellón...)
-medidas por reflectancia sobre fondo blanco y negro, 400-700 nm / 10 nm.
-Fuente: https://github.com/fligt/revigo-spectra (CC0)
+Historical pigment mixtures (Eosin, Cochineal, Minium, vermilion...)
+measured by reflectance over white and black grounds, 400-700 nm / 10 nm.
+Source: https://github.com/fligt/revigo-spectra (CC0)
 
-Salida: data/libraries/pinturas/*.csv
+Output: data/libraries/revigo/*.csv
 """
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "data" / "libraries" / "pinturas"
+OUT = ROOT / "data" / "libraries" / "revigo"
 RAW = ("https://raw.githubusercontent.com/fligt/revigo-spectra/master/data/")
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-GROUNDS = {"_w": "fondo blanco", "_b": "fondo negro"}
+GROUNDS = {"_w": "on white ground", "_b": "on black ground"}
 
 
 def get(url: str) -> str:
@@ -28,7 +28,7 @@ def get(url: str) -> str:
 
 
 def main() -> int:
-    print("Descargando espectros de pinturas Revigo ...")
+    print("Downloading Revigo paint spectra ...")
     spec_txt = get(RAW + "revigo-mixture-specifications.txt")
     spec: dict[str, str] = {}
     for line in spec_txt.splitlines():
@@ -65,7 +65,7 @@ def main() -> int:
         except ValueError:
             continue
         name = f"{base} · {GROUNDS[suffix]}"
-        out = [f"# name: {name}", "# category: pintura",
+        out = [f"# name: {name}", "# category: paint",
                "# source: Revigo project (CC0), fligt/revigo-spectra",
                "wavelength_nm,reflectance"]
         out += [f"{w:.0f},{max(0.0, v / 100.0):.6f}"
@@ -73,7 +73,7 @@ def main() -> int:
         (OUT / f"{key}.csv").write_text("\n".join(out) + "\n",
                                         encoding="utf-8")
         n += 1
-    print(f"Listo: {n} espectros de pintura en {OUT}")
+    print(f"Done: {n} paint spectra in {OUT}")
     return 0
 
 

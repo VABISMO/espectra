@@ -1,5 +1,5 @@
 /* ============================================================
-   ESPECTRA · tema de diseño — oscuro, contraste AA en todo
+   ESPECTRA · design theme — dark, AA contrast throughout
    ============================================================ */
 :root {
   --bg: #070a12;
@@ -170,7 +170,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
 .thumb .x { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 14px; }
 .thumb .x:hover { color: var(--red); }
 
-/* ------------------------------ previsualización extracción */
+/* ------------------------------ extraction preview */
 .bandwrap { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
 .bandwrap img { display: block; width: 100%; }
 .band-band {
@@ -179,7 +179,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
   background: rgba(34, 211, 238, 0.14); pointer-events: none;
 }
 .band-band::after {
-  content: 'banda usada'; position: absolute; right: 8px; top: 2px;
+  content: 'band used'; position: absolute; right: 8px; top: 2px;
   font: 700 10.5px var(--mono); color: #a5f3fc; letter-spacing: 1px;
 }
 
@@ -237,7 +237,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
 .ringwrap .val b { font: 700 30px var(--display); letter-spacing: -1px; }
 .ringwrap .val span { font: 600 10.5px var(--mono); color: var(--muted); letter-spacing: 2px; }
 
-/* ------------------------------ pestañas */
+/* ------------------------------ tabs */
 .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
 .tab {
   padding: 10px 16px; background: none; border: none; border-bottom: 2.5px solid transparent;
@@ -260,7 +260,7 @@ table.data .mono { font-family: var(--mono); font-size: 13px; }
 .scorebar { position: relative; height: 7px; border-radius: 99px; background: rgba(148,163,184,.15); min-width: 74px; overflow: hidden; }
 .scorebar i { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: var(--spectral); }
 
-/* ------------------------------ método tarjetas (calibración) */
+/* ------------------------------ method cards (calibration) */
 .methods { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px; }
 .method {
   border: 1px solid var(--line); background: var(--panel-3); border-radius: 13px;
@@ -280,7 +280,7 @@ table.data .mono { font-family: var(--mono); font-size: 13px; }
 }
 .log .ok { color: #7ce7c3; }
 
-/* ------------------------------ estadísticas biblioteca */
+/* ------------------------------ library stats */
 .stat { display: flex; flex-direction: column; gap: 2px; }
 .stat b { font: 700 30px var(--display); letter-spacing: -1px; }
 .stat span { font-size: 12.5px; color: var(--muted); }
@@ -312,7 +312,7 @@ table.data .mono { font-family: var(--mono); font-size: 13px; }
 }
 @keyframes rot { to { transform: rotate(360deg); } }
 
-/* ------------------------------ guía */
+/* ------------------------------ guide */
 .gtable { width: 100%; border-collapse: collapse; font-size: 14px; }
 .gtable th, .gtable td { padding: 10px 13px; border-bottom: 1px solid var(--line); text-align: left; }
 .gtable th { font: 700 11.5px var(--display); letter-spacing: 1.4px; text-transform: uppercase; color: var(--dim); }
